@@ -50,6 +50,8 @@ def apply_button(
         return button.key, f"Pen color: {button.label.lower()}"
     if button.key == "eraser":
         return "eraser", "Eraser selected"
+    if button.key == "move":
+        return "move", "Move selected: point at a painted shape and drag"
     if button.key == "undo":
         return active_tool, "Undo" if canvas.undo() else "Nothing to undo"
     if button.key == "redo":
@@ -117,6 +119,7 @@ def main() -> None:
 
                 if in_toolbar:
                     canvas.end_stroke()
+                    canvas.end_move()
                     can_select = gesture in {Gesture.DRAW, Gesture.PINCH}
                     hovered = toolbar.hit_test(cursor) if can_select else None
                     activated, hover_progress = selector.update(
@@ -132,7 +135,16 @@ def main() -> None:
                     selector.reset()
                     drawing = gesture is Gesture.DRAW
                     two_finger_erase = gesture is Gesture.ERASE
-                    if drawing:
+                    if active_tool == "move":
+                        canvas.end_stroke()
+                        if drawing:
+                            if not canvas.is_moving:
+                                canvas.begin_move(cursor)
+                            if canvas.is_moving:
+                                canvas.update_move(cursor)
+                        else:
+                            canvas.end_move()
+                    elif drawing:
                         if active_tool == "eraser":
                             canvas.erase_point(cursor, 46)
                         else:
@@ -143,13 +155,26 @@ def main() -> None:
                         canvas.end_stroke()
             else:
                 canvas.end_stroke()
+                canvas.end_move()
                 smoother.reset()
                 selector.reset()
 
             display = canvas.composite(frame)
+            if canvas.move_bounds:
+                x, y, box_width, box_height = canvas.move_bounds
+                cv2.rectangle(
+                    display,
+                    (x - 5, y - 5),
+                    (x + box_width + 5, y + box_height + 5),
+                    (80, 220, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
             toolbar.draw(display, active_tool, hover_key, hover_progress)
             if cursor is not None:
                 radius = 22 if gesture is Gesture.ERASE or active_tool == "eraser" else 9
+                if active_tool == "move":
+                    radius = 14
                 cursor_color = (255, 255, 255) if hover_key else (80, 220, 255)
                 cv2.circle(display, cursor, radius, cursor_color, 2, cv2.LINE_AA)
 
@@ -175,6 +200,8 @@ def main() -> None:
                 canvas.undo()
             elif key == ord("y"):
                 canvas.redo()
+            elif key == ord("m"):
+                active_tool = "move"
     finally:
         tracker.close()
         camera.release()
