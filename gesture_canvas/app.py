@@ -40,6 +40,16 @@ def save_canvas(canvas: DrawingCanvas, output_dir: Path) -> Path:
     return canvas.export(output_dir / f"gesture_canvas_{stamp}.png")
 
 
+def drag_gesture_for_tool(active_tool: str) -> Gesture | None:
+    """Return the hand pose that holds a draggable component for each tool."""
+
+    if active_tool == "move":
+        return Gesture.DRAW
+    if active_tool == "grab":
+        return Gesture.PINCH
+    return None
+
+
 def apply_button(
     button: ToolButton,
     canvas: DrawingCanvas,
@@ -52,6 +62,8 @@ def apply_button(
         return "eraser", "Eraser selected"
     if button.key == "move":
         return "move", "Move selected: point at a painted shape and drag"
+    if button.key == "grab":
+        return "grab", "Grab selected: pinch a painted shape and drag"
     if button.key == "undo":
         return active_tool, "Undo" if canvas.undo() else "Nothing to undo"
     if button.key == "redo":
@@ -135,9 +147,10 @@ def main() -> None:
                     selector.reset()
                     drawing = gesture is Gesture.DRAW
                     two_finger_erase = gesture is Gesture.ERASE
-                    if active_tool == "move":
+                    drag_gesture = drag_gesture_for_tool(active_tool)
+                    if drag_gesture is not None:
                         canvas.end_stroke()
-                        if drawing:
+                        if gesture is drag_gesture:
                             if not canvas.is_moving:
                                 canvas.begin_move(cursor)
                             if canvas.is_moving:
@@ -173,7 +186,7 @@ def main() -> None:
             toolbar.draw(display, active_tool, hover_key, hover_progress)
             if cursor is not None:
                 radius = 22 if gesture is Gesture.ERASE or active_tool == "eraser" else 9
-                if active_tool == "move":
+                if active_tool in {"move", "grab"}:
                     radius = 14
                 cursor_color = (255, 255, 255) if hover_key else (80, 220, 255)
                 cv2.circle(display, cursor, radius, cursor_color, 2, cv2.LINE_AA)
@@ -202,6 +215,8 @@ def main() -> None:
                 canvas.redo()
             elif key == ord("m"):
                 active_tool = "move"
+            elif key == ord("g"):
+                active_tool = "grab"
     finally:
         tracker.close()
         camera.release()

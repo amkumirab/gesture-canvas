@@ -38,7 +38,13 @@ def test_toolbar_hit_testing():
     assert toolbar.hit_test((10, toolbar.height + 1)) is None
 
 
+def test_all_toolbar_buttons_fit_common_camera_width():
+    toolbar = Toolbar(frame_width=640)
+    last_index = len(BUTTONS) - 1
+    last_left = toolbar.margin + last_index * (toolbar.button_width + toolbar.gap)
+    assert last_left + toolbar.button_width <= 640 - toolbar.margin
+
+
 def test_dwell_duration_must_be_positive():
     with pytest.raises(ValueError):
         DwellSelector(dwell_seconds=0)
-

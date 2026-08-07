@@ -68,6 +68,7 @@ BUTTONS = (
     ToolButton("black", "BLACK", (20, 20, 20)),
     ToolButton("eraser", "ERASE"),
     ToolButton("move", "MOVE"),
+    ToolButton("grab", "GRAB"),
     ToolButton("undo", "UNDO"),
     ToolButton("redo", "REDO"),
     ToolButton("clear", "CLEAR"),
@@ -83,7 +84,7 @@ class Toolbar:
         self.margin = 8
         self.gap = 5
         usable = frame_width - 2 * self.margin - self.gap * (len(BUTTONS) - 1)
-        self.button_width = max(54, usable // len(BUTTONS))
+        self.button_width = max(1, usable // len(BUTTONS))
 
     def hit_test(self, point: tuple[int, int]) -> ToolButton | None:
         x, y = point
@@ -129,7 +130,12 @@ class Toolbar:
             text_color = (255, 255, 255)
             if button.key in {"green", "red"}:
                 text_color = (20, 20, 20)
-            font_scale = 0.42 if self.button_width < 80 else 0.5
+            if self.button_width < 60:
+                font_scale = 0.34
+            elif self.button_width < 80:
+                font_scale = 0.42
+            else:
+                font_scale = 0.5
             size = cv2.getTextSize(button.label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)[0]
             tx = left + max(3, (right - left - size[0]) // 2)
             ty = self.margin + (self.height - 2 * self.margin + size[1]) // 2

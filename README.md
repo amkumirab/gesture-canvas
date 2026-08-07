@@ -15,7 +15,7 @@ The project works immediately with an explainable rule-based gesture baseline. I
 - Draw with one raised index finger
 - Erase with two raised fingers
 - Point-and-hold toolbar selection with visible progress feedback
-- Move an individual connected stroke or shape by dragging it with one finger
+- Move an individual connected stroke either by pointing or with a pinch-and-drag gesture
 - Cursor smoothing to reduce landmark jitter
 - Undo, redo, clear, and PNG export
 - Confidence and FPS display
@@ -62,10 +62,12 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Temporary eraser | Raise index and middle fingers |
 | Toolbar selection | Point with your index finger and hold over a button for 0.7 seconds |
 | Move a drawing | Select `MOVE`, point at a painted shape, then drag with your index finger |
+| Pinch and move | Select `GRAB`, pinch thumb and index over a painted shape, drag, then open to drop |
 | Save | Toolbar `SAVE` or `S` |
 | Undo / Redo | Toolbar buttons or `Z` / `Y` |
 | Clear | Toolbar `CLEAR` or `C` |
 | Select move tool | Toolbar `MOVE` or `M` |
+| Select pinch-grab tool | Toolbar `GRAB` or `G` |
 | Quit | `Q` or `Esc` |
 
 ## Train your own gesture model
