@@ -16,7 +16,7 @@ The project works immediately with an explainable rule-based gesture baseline. I
 - Erase with two raised fingers
 - Point-and-hold toolbar selection with visible progress feedback
 - Move an individual connected stroke either by pointing or with a pinch-and-drag gesture
-- Cursor smoothing to reduce landmark jitter
+- Adaptive cursor smoothing and short dropout recovery for continuous strokes
 - Undo, redo, clear, and PNG export
 - Confidence and FPS display
 - Personal gesture dataset collector

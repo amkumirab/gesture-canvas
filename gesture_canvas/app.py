@@ -11,10 +11,14 @@ import cv2
 
 from .camera import create_hand_tracker, detect_landmarks, open_camera
 from .canvas import DrawingCanvas
-from .gestures import Gesture, RuleBasedGestureClassifier
+from .gestures import (
+    DrawGestureStabilizer,
+    Gesture,
+    RuleBasedGestureClassifier,
+)
 from .landmarks import to_pixel
 from .model import NeuralGesturePredictor
-from .smoothing import ExponentialSmoother
+from .smoothing import AdaptiveSmoother
 from .toolbar import DwellSelector, Toolbar, ToolButton
 
 
@@ -90,7 +94,8 @@ def main() -> None:
     except Exception:
         camera.release()
         raise
-    smoother = ExponentialSmoother(alpha=0.48)
+    smoother = AdaptiveSmoother()
+    draw_stabilizer = DrawGestureStabilizer()
 
     canvas: DrawingCanvas | None = None
     toolbar: Toolbar | None = None
@@ -123,9 +128,11 @@ def main() -> None:
             cursor: tuple[int, int] | None = None
             hover_key = None
             hover_progress = 0.0
+            interaction_time = time.monotonic()
 
             if landmarks is not None:
-                gesture, confidence = classifier.classify(landmarks)
+                raw_gesture, confidence = classifier.classify(landmarks)
+                gesture = draw_stabilizer.update(raw_gesture, interaction_time)
                 cursor = smoother.update(to_pixel(landmarks[8], width, height))
                 in_toolbar = cursor[1] <= toolbar.height
 
@@ -158,16 +165,25 @@ def main() -> None:
                         else:
                             canvas.end_move()
                     elif drawing:
+                        canvas.end_move()
                         if active_tool == "eraser":
-                            canvas.erase_point(cursor, 46)
+                            canvas.erase_point(cursor, 46, max_segment_length=110)
                         else:
-                            canvas.add_point(cursor, COLORS[active_tool], 7)
+                            canvas.add_point(
+                                cursor,
+                                COLORS[active_tool],
+                                7,
+                                max_segment_length=90,
+                            )
                     elif two_finger_erase:
-                        canvas.erase_point(cursor, 46)
+                        canvas.end_move()
+                        canvas.erase_point(cursor, 46, max_segment_length=110)
                     else:
                         canvas.end_stroke()
+                        canvas.end_move()
             else:
-                canvas.end_stroke()
+                if not draw_stabilizer.hold_during_missing(interaction_time):
+                    canvas.end_stroke()
                 canvas.end_move()
                 smoother.reset()
                 selector.reset()

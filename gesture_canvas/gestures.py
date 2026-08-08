@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from math import hypot
+from math import hypot, sqrt
 from typing import Sequence
 
 from .landmarks import Landmark
@@ -18,11 +18,56 @@ class Gesture(str, Enum):
 
 
 FINGER_JOINTS = {
-    "index": (8, 6),
-    "middle": (12, 10),
-    "ring": (16, 14),
-    "pinky": (20, 18),
+    "index": (5, 6, 8),
+    "middle": (9, 10, 12),
+    "ring": (13, 14, 16),
+    "pinky": (17, 18, 20),
 }
+
+
+class DrawGestureStabilizer:
+    """Bridge brief pose-classification dropouts without delaying deliberate tools."""
+
+    def __init__(self, grace_seconds: float = 0.14, erase_confirm_frames: int = 2) -> None:
+        if grace_seconds < 0:
+            raise ValueError("grace_seconds cannot be negative")
+        if erase_confirm_frames < 1:
+            raise ValueError("erase_confirm_frames must be positive")
+        self.grace_seconds = grace_seconds
+        self.erase_confirm_frames = erase_confirm_frames
+        self._last_draw_at: float | None = None
+        self._erase_count = 0
+
+    def update(self, gesture: Gesture, now: float) -> Gesture:
+        if gesture is Gesture.DRAW:
+            self._erase_count = 0
+            self._last_draw_at = now
+            return gesture
+        if gesture is Gesture.ERASE:
+            self._erase_count += 1
+            if self._erase_count >= self.erase_confirm_frames:
+                self._last_draw_at = None
+                return gesture
+            return Gesture.DRAW if self.hold_during_missing(now) else Gesture.IDLE
+        self._erase_count = 0
+        if gesture is Gesture.PINCH:
+            self.reset()
+            return gesture
+        if self.hold_during_missing(now):
+            return Gesture.DRAW
+        return gesture
+
+    def hold_during_missing(self, now: float) -> bool:
+        if self._last_draw_at is None:
+            return False
+        if now - self._last_draw_at <= self.grace_seconds:
+            return True
+        self.reset()
+        return False
+
+    def reset(self) -> None:
+        self._last_draw_at = None
+        self._erase_count = 0
 
 
 class RuleBasedGestureClassifier:
@@ -48,8 +93,8 @@ class RuleBasedGestureClassifier:
             return Gesture.PINCH, max(0.55, confidence)
 
         extended = {
-            name: landmarks[tip].y < landmarks[pip].y
-            for name, (tip, pip) in FINGER_JOINTS.items()
+            name: self._finger_extended(landmarks, mcp, pip, tip)
+            for name, (mcp, pip, tip) in FINGER_JOINTS.items()
         }
         pattern = tuple(extended.values())
 
@@ -63,5 +108,35 @@ class RuleBasedGestureClassifier:
 
     @staticmethod
     def _distance(a: Landmark, b: Landmark) -> float:
-        return hypot(a.x - b.x, a.y - b.y)
+        return _distance(a, b)
 
+    @staticmethod
+    def _finger_extended(
+        landmarks: Sequence[Landmark],
+        mcp_index: int,
+        pip_index: int,
+        tip_index: int,
+    ) -> bool:
+        """Detect extension using finger geometry instead of screen direction."""
+
+        mcp = landmarks[mcp_index]
+        pip = landmarks[pip_index]
+        tip = landmarks[tip_index]
+        wrist = landmarks[0]
+        first = (mcp.x - pip.x, mcp.y - pip.y)
+        second = (tip.x - pip.x, tip.y - pip.y)
+        first_norm = sqrt(sum(value * value for value in first))
+        second_norm = sqrt(sum(value * value for value in second))
+        if first_norm <= 1e-6 or second_norm <= 1e-6:
+            return False
+        cosine = sum(a * b for a, b in zip(first, second)) / (first_norm * second_norm)
+        reaches_past_pip = _distance_3d(tip, wrist) > _distance_3d(pip, wrist) * 1.05
+        return cosine < -0.70 and reaches_past_pip
+
+
+def _distance(a: Landmark, b: Landmark) -> float:
+    return hypot(a.x - b.x, a.y - b.y)
+
+
+def _distance_3d(a: Landmark, b: Landmark) -> float:
+    return sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2)

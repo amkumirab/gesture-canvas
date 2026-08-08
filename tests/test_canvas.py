@@ -85,3 +85,13 @@ def test_move_rejects_empty_area_and_invalid_radius():
     assert not canvas.begin_move((50, 30))
     with np.testing.assert_raises(ValueError):
         canvas.begin_move((50, 30), selection_radius=-1)
+
+
+def test_large_tracking_jump_starts_a_new_segment():
+    canvas = DrawingCanvas(200, 100)
+    canvas.add_point((10, 20), (255, 0, 0), 5, max_segment_length=50)
+    canvas.add_point((150, 20), (255, 0, 0), 5, max_segment_length=50)
+    canvas.end_stroke()
+    assert canvas.mask[20, 10] > 0
+    assert canvas.mask[20, 80] == 0
+    assert canvas.mask[20, 150] > 0

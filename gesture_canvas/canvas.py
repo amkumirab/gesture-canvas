@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import hypot
 from pathlib import Path
 
 import cv2
@@ -76,22 +77,28 @@ class DrawingCanvas:
         point: tuple[int, int],
         color: tuple[int, int, int],
         thickness: int,
+        max_segment_length: float | None = None,
     ) -> None:
         if thickness < 1:
             raise ValueError("thickness must be positive")
         if not self._stroke_active:
             self.begin_stroke(point)
-        previous = self._last_point or point
+        previous = self._continuous_previous(point, max_segment_length)
         cv2.line(self.strokes, previous, point, color, thickness, cv2.LINE_AA)
         cv2.line(self.mask, previous, point, 255, thickness, cv2.LINE_AA)
         self._last_point = point
 
-    def erase_point(self, point: tuple[int, int], thickness: int) -> None:
+    def erase_point(
+        self,
+        point: tuple[int, int],
+        thickness: int,
+        max_segment_length: float | None = None,
+    ) -> None:
         if thickness < 1:
             raise ValueError("thickness must be positive")
         if not self._stroke_active:
             self.begin_stroke(point)
-        previous = self._last_point or point
+        previous = self._continuous_previous(point, max_segment_length)
         cv2.line(self.strokes, previous, point, (0, 0, 0), thickness, cv2.LINE_AA)
         cv2.line(self.mask, previous, point, 0, thickness, cv2.LINE_AA)
         self._last_point = point
@@ -228,6 +235,20 @@ class DrawingCanvas:
     def _restore(self, snapshot: CanvasSnapshot) -> None:
         self.strokes = snapshot.strokes.copy()
         self.mask = snapshot.mask.copy()
+
+    def _continuous_previous(
+        self,
+        point: tuple[int, int],
+        max_segment_length: float | None,
+    ) -> tuple[int, int]:
+        if max_segment_length is not None and max_segment_length <= 0:
+            raise ValueError("max_segment_length must be positive")
+        previous = self._last_point or point
+        if max_segment_length is not None:
+            distance = hypot(point[0] - previous[0], point[1] - previous[1])
+            if distance > max_segment_length:
+                return point
+        return previous
 
     def _render_move(self, dx: int, dy: int) -> None:
         if self._move is None:

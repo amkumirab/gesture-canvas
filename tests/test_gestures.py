@@ -1,16 +1,23 @@
-from gesture_canvas.gestures import Gesture, RuleBasedGestureClassifier
+import pytest
+
+from gesture_canvas.gestures import (
+    DrawGestureStabilizer,
+    Gesture,
+    RuleBasedGestureClassifier,
+)
 from gesture_canvas.landmarks import Landmark
 
 
 def make_hand(extended: tuple[bool, bool, bool, bool], pinch: bool = False):
-    hand = [Landmark(0.5, 0.7, 0) for _ in range(21)]
-    hand[5] = Landmark(0.4, 0.6)
-    hand[17] = Landmark(0.7, 0.6)
-    hand[4] = Landmark(0.2 if not pinch else 0.51, 0.5)
-    hand[8] = Landmark(0.5, 0.5)
-    for is_extended, (tip, pip) in zip(extended, ((8, 6), (12, 10), (16, 14), (20, 18))):
-        hand[pip] = Landmark(0.5, 0.55)
-        hand[tip] = Landmark(0.5, 0.35 if is_extended else 0.7)
+    hand = [Landmark(0.54, 0.8, 0) for _ in range(21)]
+    fingers = ((5, 6, 8), (9, 10, 12), (13, 14, 16), (17, 18, 20))
+    for x, is_extended, (mcp, pip, tip) in zip(
+        (0.42, 0.50, 0.58, 0.66), extended, fingers
+    ):
+        hand[mcp] = Landmark(x, 0.65)
+        hand[pip] = Landmark(x, 0.50)
+        hand[tip] = Landmark(x, 0.30 if is_extended else 0.68)
+    hand[4] = Landmark(0.12 if not pinch else hand[8].x + 0.01, hand[8].y)
     if pinch:
         hand[4] = Landmark(hand[8].x + 0.01, hand[8].y)
     return hand
@@ -36,3 +43,33 @@ def test_open_palm_is_not_drawing():
     gesture, _ = RuleBasedGestureClassifier().classify(make_hand((True, True, True, True)))
     assert gesture is Gesture.OPEN_PALM
 
+
+def test_horizontal_index_finger_still_means_draw():
+    hand = make_hand((False, False, False, False))
+    hand[0] = Landmark(0.20, 0.50)
+    hand[5] = Landmark(0.35, 0.50)
+    hand[6] = Landmark(0.50, 0.50)
+    hand[8] = Landmark(0.75, 0.50)
+    hand[4] = Landmark(0.20, 0.20)
+    gesture, _ = RuleBasedGestureClassifier().classify(hand)
+    assert gesture is Gesture.DRAW
+
+
+def test_short_draw_dropout_is_bridged():
+    stabilizer = DrawGestureStabilizer(grace_seconds=0.14)
+    assert stabilizer.update(Gesture.DRAW, now=1.0) is Gesture.DRAW
+    assert stabilizer.update(Gesture.IDLE, now=1.10) is Gesture.DRAW
+    assert stabilizer.update(Gesture.IDLE, now=1.20) is Gesture.IDLE
+
+
+def test_eraser_requires_two_frames_and_then_interrupts_draw():
+    stabilizer = DrawGestureStabilizer(grace_seconds=0.14, erase_confirm_frames=2)
+    stabilizer.update(Gesture.DRAW, now=1.0)
+    assert stabilizer.update(Gesture.ERASE, now=1.01) is Gesture.DRAW
+    assert stabilizer.update(Gesture.ERASE, now=1.02) is Gesture.ERASE
+    assert not stabilizer.hold_during_missing(now=1.03)
+
+
+def test_stabilizer_frame_validation():
+    with pytest.raises(ValueError):
+        DrawGestureStabilizer(erase_confirm_frames=0)
