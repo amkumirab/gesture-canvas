@@ -25,6 +25,70 @@ FINGER_JOINTS = {
 }
 
 
+class PinchDetector:
+    """Scale-independent pinch detector with temporal and distance hysteresis."""
+
+    def __init__(
+        self,
+        close_ratio: float = 0.34,
+        release_ratio: float = 0.50,
+        close_frames: int = 2,
+        release_frames: int = 2,
+    ) -> None:
+        if not 0 < close_ratio < release_ratio < 1:
+            raise ValueError("Expected 0 < close_ratio < release_ratio < 1")
+        if close_frames < 1 or release_frames < 1:
+            raise ValueError("Pinch confirmation frame counts must be positive")
+        self.close_ratio = close_ratio
+        self.release_ratio = release_ratio
+        self.close_frames = close_frames
+        self.release_frames = release_frames
+        self.active = False
+        self._close_count = 0
+        self._release_count = 0
+
+    def update(
+        self,
+        landmarks: Sequence[Landmark],
+    ) -> tuple[bool, bool, bool, float]:
+        """Return ``active, started, ended, ratio`` for the current frame."""
+
+        if len(landmarks) != 21:
+            raise ValueError(f"Expected 21 hand landmarks, received {len(landmarks)}")
+        palm_width = _distance_3d(landmarks[5], landmarks[17])
+        if palm_width <= 1e-6:
+            was_active = self.active
+            self.reset()
+            return False, False, was_active, float("inf")
+
+        ratio = _distance_3d(landmarks[4], landmarks[8]) / palm_width
+        was_active = self.active
+        if self.active:
+            self._close_count = 0
+            if ratio >= self.release_ratio:
+                self._release_count += 1
+                if self._release_count >= self.release_frames:
+                    self.active = False
+                    self._release_count = 0
+            else:
+                self._release_count = 0
+        else:
+            self._release_count = 0
+            if ratio < self.close_ratio:
+                self._close_count += 1
+                if self._close_count >= self.close_frames:
+                    self.active = True
+                    self._close_count = 0
+            else:
+                self._close_count = 0
+        return self.active, self.active and not was_active, was_active and not self.active, ratio
+
+    def reset(self) -> None:
+        self.active = False
+        self._close_count = 0
+        self._release_count = 0
+
+
 class DrawGestureStabilizer:
     """Bridge brief pose-classification dropouts without delaying deliberate tools."""
 

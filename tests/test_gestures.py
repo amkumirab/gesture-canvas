@@ -3,6 +3,7 @@ import pytest
 from gesture_canvas.gestures import (
     DrawGestureStabilizer,
     Gesture,
+    PinchDetector,
     RuleBasedGestureClassifier,
 )
 from gesture_canvas.landmarks import Landmark
@@ -53,6 +54,33 @@ def test_horizontal_index_finger_still_means_draw():
     hand[4] = Landmark(0.20, 0.20)
     gesture, _ = RuleBasedGestureClassifier().classify(hand)
     assert gesture is Gesture.DRAW
+
+
+def test_pinch_hysteresis_prevents_accidental_release():
+    detector = PinchDetector(close_ratio=0.34, release_ratio=0.50)
+    hand = make_hand((True, False, False, False), pinch=True)
+    active, started, ended, _ = detector.update(hand)
+    assert (active, started, ended) == (False, False, False)
+    active, started, ended, _ = detector.update(hand)
+    assert (active, started, ended) == (True, True, False)
+
+    palm_width = abs(hand[17].x - hand[5].x)
+    hand[4] = Landmark(hand[8].x + palm_width * 0.42, hand[8].y)
+    active, started, ended, _ = detector.update(hand)
+    assert (active, started, ended) == (True, False, False)
+
+    hand[4] = Landmark(hand[8].x + palm_width * 0.60, hand[8].y)
+    active, started, ended, _ = detector.update(hand)
+    assert (active, started, ended) == (True, False, False)
+    active, started, ended, _ = detector.update(hand)
+    assert (active, started, ended) == (False, False, True)
+
+
+def test_pinch_threshold_validation():
+    with pytest.raises(ValueError):
+        PinchDetector(close_ratio=0.5, release_ratio=0.4)
+    with pytest.raises(ValueError):
+        PinchDetector(close_frames=0)
 
 
 def test_short_draw_dropout_is_bridged():

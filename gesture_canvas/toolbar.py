@@ -67,8 +67,6 @@ BUTTONS = (
     ToolButton("red", "RED", (50, 60, 240)),
     ToolButton("black", "BLACK", (20, 20, 20)),
     ToolButton("eraser", "ERASE"),
-    ToolButton("move", "MOVE"),
-    ToolButton("grab", "GRAB"),
     ToolButton("undo", "UNDO"),
     ToolButton("redo", "REDO"),
     ToolButton("clear", "CLEAR"),

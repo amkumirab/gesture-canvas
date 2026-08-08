@@ -14,6 +14,7 @@ from .canvas import DrawingCanvas
 from .gestures import (
     DrawGestureStabilizer,
     Gesture,
+    PinchDetector,
     RuleBasedGestureClassifier,
 )
 from .landmarks import to_pixel
@@ -44,16 +45,6 @@ def save_canvas(canvas: DrawingCanvas, output_dir: Path) -> Path:
     return canvas.export(output_dir / f"gesture_canvas_{stamp}.png")
 
 
-def drag_gesture_for_tool(active_tool: str) -> Gesture | None:
-    """Return the hand pose that holds a draggable component for each tool."""
-
-    if active_tool == "move":
-        return Gesture.DRAW
-    if active_tool == "grab":
-        return Gesture.PINCH
-    return None
-
-
 def apply_button(
     button: ToolButton,
     canvas: DrawingCanvas,
@@ -64,10 +55,6 @@ def apply_button(
         return button.key, f"Pen color: {button.label.lower()}"
     if button.key == "eraser":
         return "eraser", "Eraser selected"
-    if button.key == "move":
-        return "move", "Move selected: point at a painted shape and drag"
-    if button.key == "grab":
-        return "grab", "Grab selected: pinch a painted shape and drag"
     if button.key == "undo":
         return active_tool, "Undo" if canvas.undo() else "Nothing to undo"
     if button.key == "redo":
@@ -95,6 +82,7 @@ def main() -> None:
         camera.release()
         raise
     smoother = AdaptiveSmoother()
+    pinch_detector = PinchDetector()
     draw_stabilizer = DrawGestureStabilizer()
 
     canvas: DrawingCanvas | None = None
@@ -103,8 +91,9 @@ def main() -> None:
     active_tool = "blue"
     hover_key: str | None = None
     hover_progress = 0.0
-    status = "Point at a toolbar button and hold to select"
+    status = "Draw with one finger; pinch any painted shape to move it"
     status_until = time.monotonic() + 4
+    draw_blocked_until = 0.0
     previous_time = time.monotonic()
     fps = 0.0
 
@@ -128,18 +117,26 @@ def main() -> None:
             cursor: tuple[int, int] | None = None
             hover_key = None
             hover_progress = 0.0
+            pinching = False
+            pinch_started = False
+            pinch_ended = False
             interaction_time = time.monotonic()
 
             if landmarks is not None:
                 raw_gesture, confidence = classifier.classify(landmarks)
+                pinching, pinch_started, pinch_ended, _ = pinch_detector.update(landmarks)
                 gesture = draw_stabilizer.update(raw_gesture, interaction_time)
+                if pinching:
+                    gesture = Gesture.PINCH
+                if pinch_ended:
+                    draw_blocked_until = interaction_time + 0.22
                 cursor = smoother.update(to_pixel(landmarks[8], width, height))
                 in_toolbar = cursor[1] <= toolbar.height
 
                 if in_toolbar:
                     canvas.end_stroke()
                     canvas.end_move()
-                    can_select = gesture in {Gesture.DRAW, Gesture.PINCH}
+                    can_select = gesture is Gesture.DRAW and not pinching
                     hovered = toolbar.hit_test(cursor) if can_select else None
                     activated, hover_progress = selector.update(
                         hovered, time.monotonic()
@@ -152,18 +149,17 @@ def main() -> None:
                         status_until = time.monotonic() + 2
                 else:
                     selector.reset()
-                    drawing = gesture is Gesture.DRAW
+                    drawing = (
+                        gesture is Gesture.DRAW
+                        and interaction_time >= draw_blocked_until
+                    )
                     two_finger_erase = gesture is Gesture.ERASE
-                    drag_gesture = drag_gesture_for_tool(active_tool)
-                    if drag_gesture is not None:
+                    if pinching:
                         canvas.end_stroke()
-                        if gesture is drag_gesture:
-                            if not canvas.is_moving:
-                                canvas.begin_move(cursor)
-                            if canvas.is_moving:
-                                canvas.update_move(cursor)
-                        else:
-                            canvas.end_move()
+                        if pinch_started:
+                            canvas.begin_move(cursor, selection_radius=32)
+                        if canvas.is_moving:
+                            canvas.update_move(cursor)
                     elif drawing:
                         canvas.end_move()
                         if active_tool == "eraser":
@@ -185,6 +181,9 @@ def main() -> None:
                 if not draw_stabilizer.hold_during_missing(interaction_time):
                     canvas.end_stroke()
                 canvas.end_move()
+                if pinch_detector.active:
+                    draw_blocked_until = interaction_time + 0.22
+                pinch_detector.reset()
                 smoother.reset()
                 selector.reset()
 
@@ -202,7 +201,7 @@ def main() -> None:
             toolbar.draw(display, active_tool, hover_key, hover_progress)
             if cursor is not None:
                 radius = 22 if gesture is Gesture.ERASE or active_tool == "eraser" else 9
-                if active_tool in {"move", "grab"}:
+                if pinching:
                     radius = 14
                 cursor_color = (255, 255, 255) if hover_key else (80, 220, 255)
                 cv2.circle(display, cursor, radius, cursor_color, 2, cv2.LINE_AA)
@@ -229,10 +228,6 @@ def main() -> None:
                 canvas.undo()
             elif key == ord("y"):
                 canvas.redo()
-            elif key == ord("m"):
-                active_tool = "move"
-            elif key == ord("g"):
-                active_tool = "grab"
     finally:
         tracker.close()
         camera.release()
