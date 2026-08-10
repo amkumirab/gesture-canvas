@@ -16,6 +16,8 @@ The project works immediately with an explainable rule-based gesture baseline. I
 - Erase with two raised fingers
 - Point-and-hold toolbar selection with visible progress feedback
 - Grab and move any connected drawing directly with a pinch-and-drag gesture
+- Scale and rotate a grabbed drawing by pinching it with both hands
+- Smoothly return to one-hand movement when either hand releases
 - Adaptive cursor smoothing and short dropout recovery for continuous strokes
 - Undo, redo, clear, and PNG export
 - Confidence and FPS display
@@ -62,6 +64,7 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Temporary eraser | Raise index and middle fingers |
 | Toolbar selection | Point with your index finger and hold over a button for 0.7 seconds |
 | Move a drawing | Pinch thumb and index over a painted shape, drag, then open to drop |
+| Scale and rotate | Keep the shape pinched, pinch with the second hand, then change hand distance and angle |
 | Save | Toolbar `SAVE` or `S` |
 | Undo / Redo | Toolbar buttons or `Z` / `Y` |
 | Clear | Toolbar `CLEAR` or `C` |
@@ -100,6 +103,7 @@ The raw camera images are not stored. The dataset contains only normalized `(x, 
 gesture_canvas/
   app.py          real-time application loop
   canvas.py       drawing, compositing, undo/redo, export
+  interaction.py  one- and two-hand manipulation coordination
   gestures.py     explainable baseline classifier
   landmarks.py    feature extraction and coordinate conversion
   collect.py      personal dataset collection

@@ -5,17 +5,25 @@ from __future__ import annotations
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 
-from .landmarks import as_landmarks
+from .landmarks import Landmark, as_landmarks
 
 
 HAND_MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
     "hand_landmarker/float16/1/hand_landmarker.task"
 )
+
+
+@dataclass(frozen=True, slots=True)
+class DetectedHand:
+    landmarks: list[Landmark]
+    handedness: str
+    confidence: float
 
 
 def default_model_path() -> Path:
@@ -61,7 +69,7 @@ class HandTracker:
         options = vision.HandLandmarkerOptions(
             base_options=python.BaseOptions(model_asset_path=str(model)),
             running_mode=vision.RunningMode.VIDEO,
-            num_hands=1,
+            num_hands=2,
             min_hand_detection_confidence=0.65,
             min_hand_presence_confidence=0.6,
             min_tracking_confidence=0.6,
@@ -70,15 +78,35 @@ class HandTracker:
         self._mp = mp
         self._last_timestamp = 0
 
-    def detect(self, frame):
+    def detect_all(self, frame) -> list[DetectedHand]:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb)
         timestamp = max(int(time.monotonic() * 1000), self._last_timestamp + 1)
         self._last_timestamp = timestamp
         result = self._landmarker.detect_for_video(image, timestamp)
         if not result.hand_landmarks:
-            return None
-        return as_landmarks(result.hand_landmarks[0])
+            return []
+
+        detected: list[DetectedHand] = []
+        for index, raw_landmarks in enumerate(result.hand_landmarks):
+            handedness = "unknown"
+            confidence = 0.0
+            if index < len(result.handedness) and result.handedness[index]:
+                category = result.handedness[index][0]
+                handedness = str(category.category_name).lower()
+                confidence = float(category.score)
+            detected.append(
+                DetectedHand(
+                    landmarks=as_landmarks(raw_landmarks),
+                    handedness=handedness,
+                    confidence=confidence,
+                )
+            )
+        return detected
+
+    def detect(self, frame):
+        hands = self.detect_all(frame)
+        return hands[0].landmarks if hands else None
 
     def close(self) -> None:
         self._landmarker.close()
@@ -101,3 +129,7 @@ def open_camera(index: int, width: int = 1280, height: int = 720):
 
 def detect_landmarks(tracker, frame):
     return tracker.detect(frame)
+
+
+def detect_hands(tracker, frame) -> list[DetectedHand]:
+    return tracker.detect_all(frame)

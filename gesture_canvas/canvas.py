@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import hypot
+from math import atan2, degrees, hypot
 from pathlib import Path
 
 import cv2
@@ -17,6 +17,16 @@ class CanvasSnapshot:
 
 
 @dataclass(slots=True)
+class TransformState:
+    start_midpoint: tuple[float, float]
+    start_distance: float
+    start_angle: float
+    base_offset: tuple[int, int]
+    base_scale: float
+    base_rotation: float
+
+
+@dataclass(slots=True)
 class MoveState:
     original: CanvasSnapshot
     base: CanvasSnapshot
@@ -25,6 +35,11 @@ class MoveState:
     anchor: tuple[int, int]
     bounds: tuple[int, int, int, int]
     offset: tuple[int, int] = (0, 0)
+    anchor_offset: tuple[int, int] = (0, 0)
+    scale: float = 1.0
+    rotation: float = 0.0
+    rendered_bounds: tuple[int, int, int, int] | None = None
+    transform: TransformState | None = None
     history_recorded: bool = False
 
 
@@ -61,9 +76,17 @@ class DrawingCanvas:
     def move_bounds(self) -> tuple[int, int, int, int] | None:
         if self._move is None:
             return None
-        x, y, width, height = self._move.bounds
-        dx, dy = self._move.offset
-        return x + dx, y + dy, width, height
+        return self._move.rendered_bounds
+
+    @property
+    def transform_info(self) -> tuple[float, float] | None:
+        if self._move is None:
+            return None
+        return self._move.scale, self._move.rotation
+
+    @property
+    def is_transforming(self) -> bool:
+        return self._move is not None and self._move.transform is not None
 
     def begin_stroke(self, point: tuple[int, int]) -> None:
         self.end_move()
@@ -145,8 +168,9 @@ class DrawingCanvas:
             selected_mask=selected_mask,
             anchor=point,
             bounds=bounds,
+            rendered_bounds=bounds,
         )
-        self._render_move(0, 0)
+        self._render_move()
         return True
 
     def update_move(self, point: tuple[int, int]) -> bool:
@@ -154,15 +178,97 @@ class DrawingCanvas:
 
         if self._move is None:
             return False
-        dx = int(point[0] - self._move.anchor[0])
-        dy = int(point[1] - self._move.anchor[1])
+        if self._move.transform is not None:
+            return False
+        dx = int(self._move.anchor_offset[0] + point[0] - self._move.anchor[0])
+        dy = int(self._move.anchor_offset[1] + point[1] - self._move.anchor[1])
         if (dx, dy) == self._move.offset:
             return False
-        if not self._move.history_recorded:
-            self._record_undo(self._move.original)
-            self._move.history_recorded = True
+        self._ensure_move_history()
         self._move.offset = dx, dy
-        self._render_move(dx, dy)
+        self._render_move()
+        return True
+
+    def begin_transform(
+        self,
+        first: tuple[int, int],
+        second: tuple[int, int],
+        minimum_distance: float = 24.0,
+    ) -> bool:
+        """Start a two-point scale and rotation gesture for the selected component."""
+
+        if minimum_distance <= 0:
+            raise ValueError("minimum_distance must be positive")
+        if self._move is None:
+            return False
+        distance = hypot(second[0] - first[0], second[1] - first[1])
+        if distance < minimum_distance:
+            return False
+        midpoint = ((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)
+        angle = atan2(second[1] - first[1], second[0] - first[0])
+        self._move.transform = TransformState(
+            start_midpoint=midpoint,
+            start_distance=distance,
+            start_angle=angle,
+            base_offset=self._move.offset,
+            base_scale=self._move.scale,
+            base_rotation=self._move.rotation,
+        )
+        return True
+
+    def update_transform(
+        self,
+        first: tuple[int, int],
+        second: tuple[int, int],
+        minimum_scale: float = 0.35,
+        maximum_scale: float = 3.0,
+    ) -> bool:
+        """Update translation, scale, and rotation from two active pinch points."""
+
+        if not 0 < minimum_scale <= maximum_scale:
+            raise ValueError("Expected 0 < minimum_scale <= maximum_scale")
+        if self._move is None or self._move.transform is None:
+            return False
+        transform = self._move.transform
+        distance = hypot(second[0] - first[0], second[1] - first[1])
+        scale = float(
+            np.clip(
+                transform.base_scale * distance / transform.start_distance,
+                minimum_scale,
+                maximum_scale,
+            )
+        )
+        current_angle = atan2(second[1] - first[1], second[0] - first[0])
+        rotation = transform.base_rotation + degrees(
+            current_angle - transform.start_angle
+        )
+        rotation = (rotation + 180.0) % 360.0 - 180.0
+        midpoint = ((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)
+        dx = int(round(transform.base_offset[0] + midpoint[0] - transform.start_midpoint[0]))
+        dy = int(round(transform.base_offset[1] + midpoint[1] - transform.start_midpoint[1]))
+        unchanged = (
+            (dx, dy) == self._move.offset
+            and abs(scale - self._move.scale) < 1e-4
+            and abs(rotation - self._move.rotation) < 1e-3
+        )
+        if unchanged:
+            return False
+        self._ensure_move_history()
+        self._move.offset = dx, dy
+        self._move.scale = scale
+        self._move.rotation = rotation
+        self._render_move()
+        return True
+
+    def end_transform(self, remaining_anchor: tuple[int, int] | None = None) -> bool:
+        """Leave two-hand mode while optionally continuing with one-hand movement."""
+
+        if self._move is None or self._move.transform is None:
+            return False
+        self._move.transform = None
+        if remaining_anchor is not None:
+            self._move.anchor = remaining_anchor
+            self._move.anchor_offset = self._move.offset
         return True
 
     def end_move(self) -> bool:
@@ -232,6 +338,11 @@ class DrawingCanvas:
             self._undo.pop(0)
         self._redo.clear()
 
+    def _ensure_move_history(self) -> None:
+        if self._move is not None and not self._move.history_recorded:
+            self._record_undo(self._move.original)
+            self._move.history_recorded = True
+
     def _restore(self, snapshot: CanvasSnapshot) -> None:
         self.strokes = snapshot.strokes.copy()
         self.mask = snapshot.mask.copy()
@@ -250,23 +361,31 @@ class DrawingCanvas:
                 return point
         return previous
 
-    def _render_move(self, dx: int, dy: int) -> None:
+    def _render_move(self) -> None:
         if self._move is None:
             return
-        transform = np.float32([[1, 0, dx], [0, 1, dy]])
+        x, y, width, height = self._move.bounds
+        center = (x + (width - 1) / 2, y + (height - 1) / 2)
+        transform = cv2.getRotationMatrix2D(
+            center,
+            self._move.rotation,
+            self._move.scale,
+        )
+        transform[0, 2] += self._move.offset[0]
+        transform[1, 2] += self._move.offset[1]
         size = (self.width, self.height)
         moved_strokes = cv2.warpAffine(
             self._move.selected_strokes,
             transform,
             size,
-            flags=cv2.INTER_NEAREST,
+            flags=cv2.INTER_LINEAR,
             borderMode=cv2.BORDER_CONSTANT,
         )
         moved_mask = cv2.warpAffine(
             self._move.selected_mask,
             transform,
             size,
-            flags=cv2.INTER_NEAREST,
+            flags=cv2.INTER_LINEAR,
             borderMode=cv2.BORDER_CONSTANT,
         )
         self.strokes = self._move.base.strokes.copy()
@@ -274,6 +393,16 @@ class DrawingCanvas:
         selected = moved_mask > 0
         self.strokes[selected] = moved_strokes[selected]
         self.mask = np.maximum(self.mask, moved_mask)
+        ys, xs = np.nonzero(selected)
+        if xs.size:
+            self._move.rendered_bounds = (
+                int(xs.min()),
+                int(ys.min()),
+                int(xs.max() - xs.min() + 1),
+                int(ys.max() - ys.min() + 1),
+            )
+        else:
+            self._move.rendered_bounds = None
 
     @staticmethod
     def _nearest_label(

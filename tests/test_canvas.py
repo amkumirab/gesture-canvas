@@ -95,3 +95,86 @@ def test_large_tracking_jump_starts_a_new_segment():
     assert canvas.mask[20, 10] > 0
     assert canvas.mask[20, 80] == 0
     assert canvas.mask[20, 150] > 0
+
+
+def test_two_hand_transform_scales_selected_component():
+    canvas = DrawingCanvas(220, 160)
+    canvas.add_point((80, 80), (255, 0, 0), 7)
+    canvas.add_point((120, 80), (255, 0, 0), 7)
+    canvas.end_stroke()
+    assert canvas.begin_move((100, 80))
+    assert canvas.begin_transform((80, 60), (120, 60))
+    assert canvas.update_transform((60, 60), (140, 60))
+    bounds = canvas.move_bounds
+    assert bounds is not None
+    assert bounds[2] >= 75
+    scale, rotation = canvas.transform_info
+    assert scale == 2.0
+    assert abs(rotation) < 1e-6
+
+
+def test_two_hand_transform_rotates_horizontal_component():
+    canvas = DrawingCanvas(220, 180)
+    canvas.add_point((80, 90), (255, 0, 0), 7)
+    canvas.add_point((140, 90), (255, 0, 0), 7)
+    canvas.end_stroke()
+    assert canvas.begin_move((110, 90))
+    assert canvas.begin_transform((90, 70), (130, 70))
+    assert canvas.update_transform((110, 50), (110, 90))
+    bounds = canvas.move_bounds
+    assert bounds is not None
+    assert bounds[3] > bounds[2]
+    _, rotation = canvas.transform_info
+    assert rotation == 90.0
+
+
+def test_transform_is_undoable_and_one_hand_can_continue_without_jump():
+    canvas = DrawingCanvas(220, 180)
+    canvas.add_point((80, 90), (255, 0, 0), 7)
+    canvas.add_point((120, 90), (255, 0, 0), 7)
+    canvas.end_stroke()
+    original = canvas.mask.copy()
+    assert canvas.begin_move((100, 90))
+    assert canvas.begin_transform((80, 60), (120, 60))
+    assert canvas.update_transform((70, 60), (130, 60))
+    before_handoff = canvas.mask.copy()
+    assert canvas.end_transform(remaining_anchor=(70, 60))
+    assert not canvas.update_move((70, 60))
+    np.testing.assert_array_equal(canvas.mask, before_handoff)
+    assert canvas.update_move((80, 60))
+    canvas.end_move()
+    assert canvas.undo()
+    np.testing.assert_array_equal(canvas.mask, original)
+
+
+def test_transform_rejects_too_close_points_and_invalid_scale():
+    canvas = DrawingCanvas(100, 80)
+    canvas.add_point((20, 20), (255, 0, 0), 5)
+    canvas.add_point((40, 20), (255, 0, 0), 5)
+    canvas.end_stroke()
+    assert canvas.begin_move((30, 20))
+    assert not canvas.begin_transform((10, 10), (15, 10), minimum_distance=10)
+    with np.testing.assert_raises(ValueError):
+        canvas.begin_transform((10, 10), (30, 10), minimum_distance=0)
+    assert canvas.begin_transform((10, 10), (40, 10))
+    with np.testing.assert_raises(ValueError):
+        canvas.update_transform((10, 10), (40, 10), minimum_scale=2, maximum_scale=1)
+
+
+def test_second_transform_continues_from_existing_scale_and_rotation():
+    canvas = DrawingCanvas(260, 220)
+    canvas.add_point((100, 110), (255, 0, 0), 7)
+    canvas.add_point((140, 110), (255, 0, 0), 7)
+    canvas.end_stroke()
+    assert canvas.begin_move((120, 110))
+    assert canvas.begin_transform((100, 80), (140, 80))
+    canvas.update_transform((80, 80), (160, 80))
+    canvas.end_transform(remaining_anchor=(80, 80))
+    first_scale, first_rotation = canvas.transform_info
+    assert first_scale == 2.0
+
+    assert canvas.begin_transform((80, 80), (160, 80))
+    canvas.update_transform((120, 40), (120, 120))
+    second_scale, second_rotation = canvas.transform_info
+    assert second_scale == first_scale
+    assert second_rotation == first_rotation + 90.0
