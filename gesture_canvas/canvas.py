@@ -17,6 +17,14 @@ class CanvasSnapshot:
 
 
 @dataclass(slots=True)
+class StrokeState:
+    points: list[tuple[int, int]]
+    color: tuple[int, int, int]
+    thickness: int
+    path_length: float = 0.0
+
+
+@dataclass(slots=True)
 class TransformState:
     start_midpoint: tuple[float, float]
     start_distance: float
@@ -58,6 +66,7 @@ class DrawingCanvas:
         self._redo: list[CanvasSnapshot] = []
         self._stroke_active = False
         self._last_point: tuple[int, int] | None = None
+        self._paint_stroke: StrokeState | None = None
         self._move: MoveState | None = None
 
     @property
@@ -94,6 +103,7 @@ class DrawingCanvas:
             self._push_undo()
             self._stroke_active = True
             self._last_point = point
+            self._paint_stroke = None
 
     def add_point(
         self,
@@ -107,6 +117,13 @@ class DrawingCanvas:
         if not self._stroke_active:
             self.begin_stroke(point)
         previous = self._continuous_previous(point, max_segment_length)
+        if self._paint_stroke is None:
+            self._paint_stroke = StrokeState([previous], color, thickness)
+        if previous != point:
+            self._paint_stroke.path_length += hypot(
+                point[0] - previous[0], point[1] - previous[1]
+            )
+        self._paint_stroke.points.append(point)
         cv2.line(self.strokes, previous, point, color, thickness, cv2.LINE_AA)
         cv2.line(self.mask, previous, point, 255, thickness, cv2.LINE_AA)
         self._last_point = point
@@ -121,14 +138,18 @@ class DrawingCanvas:
             raise ValueError("thickness must be positive")
         if not self._stroke_active:
             self.begin_stroke(point)
+        self._paint_stroke = None
         previous = self._continuous_previous(point, max_segment_length)
         cv2.line(self.strokes, previous, point, (0, 0, 0), thickness, cv2.LINE_AA)
         cv2.line(self.mask, previous, point, 0, thickness, cv2.LINE_AA)
         self._last_point = point
 
     def end_stroke(self) -> None:
+        if self._stroke_active and self._paint_stroke is not None:
+            self._fill_closed_stroke(self._paint_stroke)
         self._stroke_active = False
         self._last_point = None
+        self._paint_stroke = None
 
     def begin_move(self, point: tuple[int, int], selection_radius: int = 18) -> bool:
         """Select the connected painted component at or near ``point``."""
@@ -360,6 +381,35 @@ class DrawingCanvas:
             if distance > max_segment_length:
                 return point
         return previous
+
+    def _fill_closed_stroke(self, stroke: StrokeState) -> bool:
+        """Fill a sufficiently large closed stroke using its original color."""
+
+        if len(stroke.points) < 6:
+            return False
+        points = np.asarray(stroke.points, dtype=np.int32)
+        start = points[0]
+        end = points[-1]
+        closure_distance = hypot(float(end[0] - start[0]), float(end[1] - start[1]))
+        closure_limit = max(18.0, stroke.thickness * 3.0)
+        if closure_distance > closure_limit:
+            return False
+
+        x, y, width, height = cv2.boundingRect(points)
+        minimum_dimension = max(16, stroke.thickness * 3)
+        if width < minimum_dimension or height < minimum_dimension:
+            return False
+        if stroke.path_length < 1.15 * (width + height):
+            return False
+
+        contour = points.reshape((-1, 1, 2))
+        minimum_area = float(minimum_dimension**2)
+        if abs(cv2.contourArea(contour)) < minimum_area:
+            return False
+
+        cv2.fillPoly(self.strokes, [contour], stroke.color, lineType=cv2.LINE_AA)
+        cv2.fillPoly(self.mask, [contour], 255, lineType=cv2.LINE_AA)
+        return True
 
     def _render_move(self) -> None:
         if self._move is None:

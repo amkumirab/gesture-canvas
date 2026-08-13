@@ -178,3 +178,70 @@ def test_second_transform_continues_from_existing_scale_and_rotation():
     second_scale, second_rotation = canvas.transform_info
     assert second_scale == first_scale
     assert second_rotation == first_rotation + 90.0
+
+
+def draw_polygon(
+    canvas: DrawingCanvas,
+    points: list[tuple[int, int]],
+    color: tuple[int, int, int] = (40, 80, 220),
+    thickness: int = 5,
+) -> None:
+    for point in points:
+        canvas.add_point(point, color, thickness)
+    canvas.end_stroke()
+
+
+def test_closed_shape_is_filled_with_its_stroke_color():
+    canvas = DrawingCanvas(140, 120)
+    color = (40, 80, 220)
+    draw_polygon(
+        canvas,
+        [(30, 30), (100, 30), (100, 90), (30, 90), (30, 30), (31, 30)],
+        color,
+    )
+    assert canvas.mask[60, 65] == 255
+    np.testing.assert_array_equal(canvas.strokes[60, 65], color)
+
+
+def test_open_shape_keeps_its_interior_empty():
+    canvas = DrawingCanvas(140, 120)
+    draw_polygon(canvas, [(30, 30), (100, 30), (100, 90), (30, 90)])
+    assert canvas.mask[60, 65] == 0
+
+
+def test_tiny_closed_loop_is_not_auto_filled():
+    canvas = DrawingCanvas(80, 80)
+    draw_polygon(
+        canvas,
+        [(30, 30), (38, 30), (38, 38), (30, 38), (30, 30), (31, 30)],
+        thickness=3,
+    )
+    assert canvas.mask[34, 34] == 0
+
+
+def test_auto_fill_is_part_of_the_same_undo_operation():
+    canvas = DrawingCanvas(140, 120)
+    draw_polygon(
+        canvas,
+        [(30, 30), (100, 30), (100, 90), (30, 90), (30, 30), (31, 30)],
+    )
+    filled = canvas.mask.copy()
+    assert canvas.undo()
+    assert not np.any(canvas.mask)
+    assert canvas.redo()
+    np.testing.assert_array_equal(canvas.mask, filled)
+
+
+def test_closed_eraser_motion_does_not_create_a_fill():
+    canvas = DrawingCanvas(140, 120)
+    for point in [
+        (30, 30),
+        (100, 30),
+        (100, 90),
+        (30, 90),
+        (30, 30),
+        (31, 30),
+    ]:
+        canvas.erase_point(point, 5)
+    canvas.end_stroke()
+    assert not np.any(canvas.mask)

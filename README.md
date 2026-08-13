@@ -13,6 +13,7 @@ The project works immediately with an explainable rule-based gesture baseline. I
 ## Features
 
 - Draw with one raised index finger
+- Automatically fill a completed closed shape with its stroke color
 - Erase with two raised fingers
 - Point-and-hold toolbar selection with visible progress feedback
 - Grab and move any connected drawing directly with a pinch-and-drag gesture
@@ -61,6 +62,7 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Action | Hand gesture / keyboard |
 |---|---|
 | Draw | Raise only the index finger |
+| Auto-fill | Complete and close a shape, then lift or bend the drawing finger |
 | Temporary eraser | Raise index and middle fingers |
 | Toolbar selection | Point with your index finger and hold over a button for 0.7 seconds |
 | Move a drawing | Pinch thumb and index over a painted shape, drag, then open to drop |
