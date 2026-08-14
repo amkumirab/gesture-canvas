@@ -12,6 +12,7 @@ import cv2
 
 from .camera import DetectedHand, create_hand_tracker, detect_hands, open_camera
 from .canvas import DrawingCanvas
+from .controls import DEFAULT_BRUSH_SIZE, adjust_brush_size
 from .gestures import (
     DrawGestureStabilizer,
     Gesture,
@@ -116,6 +117,7 @@ def main() -> None:
     toolbar: Toolbar | None = None
     selector = DwellSelector(dwell_seconds=0.7)
     active_tool = "blue"
+    brush_size = DEFAULT_BRUSH_SIZE
     drawing_hand_id: str | None = None
     hover_key: str | None = None
     hover_progress = 0.0
@@ -258,7 +260,7 @@ def main() -> None:
                                 canvas.add_point(
                                     active_hand.cursor,
                                     COLORS[active_tool],
-                                    7,
+                                    brush_size,
                                     max_segment_length=90,
                                 )
                         elif two_finger_erase:
@@ -318,10 +320,12 @@ def main() -> None:
             for hand in hands:
                 is_drawing_hand = hand.key == drawing_hand_id
                 radius = 14 if hand.pinching else 9
-                if is_drawing_hand and (
+                if is_drawing_hand and not hand.pinching and (
                     hand.gesture is Gesture.ERASE or active_tool == "eraser"
                 ):
-                    radius = 22
+                    radius = 23
+                elif is_drawing_hand and not hand.pinching:
+                    radius = max(4, round(brush_size / 2))
                 color = (255, 255, 255) if hand.pinching else (80, 220, 255)
                 if not is_drawing_hand and not hand.pinching:
                     color = (255, 170, 60)
@@ -344,7 +348,7 @@ def main() -> None:
             previous_time = now
             label = (
                 f"{display_gesture.value}  {display_confidence:.0%}   "
-                f"hands {len(hands)}   FPS {fps:.0f}"
+                f"brush {brush_size}px   hands {len(hands)}   FPS {fps:.0f}"
             )
             cv2.putText(
                 display,
@@ -384,6 +388,14 @@ def main() -> None:
             elif key == ord("y"):
                 canvas.redo()
                 grab_coordinator.reset()
+            elif key == ord("["):
+                brush_size = adjust_brush_size(brush_size, -1)
+                status = f"Brush size: {brush_size}px"
+                status_until = time.monotonic() + 2
+            elif key == ord("]"):
+                brush_size = adjust_brush_size(brush_size, 1)
+                status = f"Brush size: {brush_size}px"
+                status_until = time.monotonic() + 2
     finally:
         tracker.close()
         camera.release()
