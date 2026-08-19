@@ -21,6 +21,7 @@ The project works immediately with an explainable rule-based gesture baseline. I
 - Smoothly return to one-hand movement when either hand releases
 - Adaptive cursor smoothing and short dropout recovery for continuous strokes
 - Adjustable 2-30 px brush with an accurate on-screen size preview
+- Toggleable in-app controls guide
 - Undo, redo, clear, and PNG export
 - Confidence and FPS display
 - Personal gesture dataset collector
@@ -72,6 +73,7 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Undo / Redo | Toolbar buttons or `Z` / `Y` |
 | Clear | Toolbar `CLEAR` or `C` |
 | Thinner / thicker brush | `[` / `]` |
+| Show / hide controls guide | `H` |
 | Quit | `Q` or `Esc` |
 
 ## Train your own gesture model

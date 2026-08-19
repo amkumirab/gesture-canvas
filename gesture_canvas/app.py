@@ -19,6 +19,7 @@ from .gestures import (
     PinchDetector,
     RuleBasedGestureClassifier,
 )
+from .help_overlay import draw_help_overlay
 from .interaction import GrabCoordinator, PinchHand
 from .landmarks import to_pixel
 from .model import NeuralGesturePredictor
@@ -118,6 +119,7 @@ def main() -> None:
     selector = DwellSelector(dwell_seconds=0.7)
     active_tool = "blue"
     brush_size = DEFAULT_BRUSH_SIZE
+    show_help = False
     drawing_hand_id: str | None = None
     hover_key: str | None = None
     hover_progress = 0.0
@@ -371,6 +373,8 @@ def main() -> None:
                     2,
                     cv2.LINE_AA,
                 )
+            if show_help:
+                draw_help_overlay(display, toolbar.height)
 
             cv2.imshow("Gesture Canvas", display)
             key = cv2.waitKey(1) & 0xFF
@@ -396,6 +400,8 @@ def main() -> None:
                 brush_size = adjust_brush_size(brush_size, 1)
                 status = f"Brush size: {brush_size}px"
                 status_until = time.monotonic() + 2
+            elif key == ord("h"):
+                show_help = not show_help
     finally:
         tracker.close()
         camera.release()
