@@ -245,3 +245,65 @@ def test_closed_eraser_motion_does_not_create_a_fill():
         canvas.erase_point(point, 5)
     canvas.end_stroke()
     assert not np.any(canvas.mask)
+
+
+def test_filled_shape_can_be_extruded_and_undone():
+    canvas = DrawingCanvas(160, 140)
+    draw_polygon(
+        canvas,
+        [(35, 35), (125, 35), (125, 105), (35, 105), (35, 35), (36, 35)],
+    )
+    painted = canvas.mask.copy()
+
+    assert canvas.extrude_at((80, 70))
+    assert canvas.spatial_object_count == 1
+    assert not np.any(canvas.mask)
+    rendered = canvas.composite(np.zeros((140, 160, 3), dtype=np.uint8))
+    assert np.count_nonzero(rendered) > 0
+
+    assert canvas.undo()
+    assert canvas.spatial_object_count == 0
+    np.testing.assert_array_equal(canvas.mask, painted)
+    assert canvas.redo()
+    assert canvas.spatial_object_count == 1
+
+
+def test_open_shape_cannot_be_extruded():
+    canvas = DrawingCanvas(160, 140)
+    draw_polygon(canvas, [(35, 35), (125, 35), (125, 105), (80, 105)])
+
+    assert not canvas.extrude_at((125, 70), selection_radius=10)
+    assert canvas.spatial_object_count == 0
+
+
+def test_extrusion_depth_change_uses_canvas_history():
+    canvas = DrawingCanvas(160, 140)
+    draw_polygon(
+        canvas,
+        [(35, 35), (125, 35), (125, 105), (35, 105), (35, 35), (36, 35)],
+    )
+    assert canvas.extrude_at((80, 70))
+    original_depth = canvas.selected_spatial_depth
+
+    assert canvas.adjust_extrusion_depth(20)
+    assert canvas.selected_spatial_depth == original_depth + 20
+    assert canvas.undo()
+    assert canvas.selected_spatial_depth == original_depth
+
+
+def test_extruded_shape_movement_is_undoable():
+    canvas = DrawingCanvas(180, 160)
+    draw_polygon(
+        canvas,
+        [(40, 40), (140, 40), (140, 120), (40, 120), (40, 40), (41, 40)],
+    )
+    assert canvas.extrude_at((90, 80))
+    original_position = canvas.spatial.objects[0].position
+
+    assert canvas.begin_move((90, 80))
+    assert canvas.update_move((115, 95))
+    assert canvas.end_move()
+    assert canvas.spatial.objects[0].position != original_position
+
+    assert canvas.undo()
+    assert canvas.spatial.objects[0].position == original_position

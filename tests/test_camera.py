@@ -1,27 +1,26 @@
 from pathlib import Path
 
-from gesture_canvas.camera import ensure_hand_model
+from gesture_canvas.camera import ensure_landmarker_asset
 
 
-def test_existing_model_is_not_downloaded(tmp_path: Path, monkeypatch):
-    model = tmp_path / "hand.task"
-    model.write_bytes(b"existing")
+def test_existing_asset_is_not_downloaded(tmp_path: Path, monkeypatch):
+    asset = tmp_path / "hand.task"
+    asset.write_bytes(b"existing")
 
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("download should not be called")
 
     monkeypatch.setattr("urllib.request.urlretrieve", fail_if_called)
-    assert ensure_hand_model(model) == model
+    assert ensure_landmarker_asset(asset) == asset
 
 
-def test_model_download_is_atomically_moved(tmp_path: Path, monkeypatch):
-    model = tmp_path / "nested" / "hand.task"
+def test_asset_download_is_atomically_moved(tmp_path: Path, monkeypatch):
+    asset = tmp_path / "nested" / "hand.task"
 
     def fake_download(_url, target):
-        Path(target).write_bytes(b"model-data")
+        Path(target).write_bytes(b"asset-data")
 
     monkeypatch.setattr("urllib.request.urlretrieve", fake_download)
-    assert ensure_hand_model(model) == model
-    assert model.read_bytes() == b"model-data"
-    assert not model.with_suffix(".download").exists()
-
+    assert ensure_landmarker_asset(asset) == asset
+    assert asset.read_bytes() == b"asset-data"
+    assert not asset.with_suffix(".download").exists()

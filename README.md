@@ -1,8 +1,8 @@
 # Gesture Canvas
 
-A real-time hand-tracking drawing application built with Python, OpenCV, MediaPipe, and an optional user-trained PyTorch neural network.
+A real-time hand-tracking canvas for drawing, moving, and extruding shapes using Python, OpenCV, and MediaPipe.
 
-The project works immediately with an explainable rule-based gesture baseline. It also includes a complete data collection and MLP training pipeline so the baseline can be replaced with a model trained on your own hand poses.
+The project works immediately with deterministic hand-geometry rules and processes every camera frame locally.
 
 ## Input and output
 
@@ -22,11 +22,12 @@ The project works immediately with an explainable rule-based gesture baseline. I
 - Adaptive cursor smoothing and short dropout recovery for continuous strokes
 - Adjustable 2-30 px brush with an accurate on-screen size preview
 - Toggleable in-app controls guide
+- Convert a filled closed drawing into a shaded 3D extrusion
+- Move 3D objects with one pinch and scale, spin, or tilt them with two hands
+- Adjust extrusion depth and keep every 3D edit in undo/redo history
 - Undo, redo, clear, and PNG export
 - Confidence and FPS display
-- Personal gesture dataset collector
-- Optional PyTorch MLP training and confidence rejection
-- Unit tests for gesture logic, features, smoothing, and canvas history
+- Unit tests for gesture logic, smoothing, 3D projection, and canvas history
 - GitHub Actions tests on Python 3.10, 3.11, and 3.12
 
 ## Quick start
@@ -57,7 +58,7 @@ gesture-canvas
 
 Allow camera access when your operating system asks for permission. If the wrong camera opens, run `gesture-canvas --camera 1`.
 
-On the first launch, the application downloads MediaPipe's official Hand Landmarker model (about 8 MB) and keeps it in a local cache. Later launches work without another download.
+On the first launch, the application downloads MediaPipe's official Hand Landmarker asset (about 8 MB) and keeps it in a local cache. Later launches work without another download.
 
 ## Controls
 
@@ -69,39 +70,15 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Toolbar selection | Point with your index finger and hold over a button for 0.7 seconds |
 | Move a drawing | Pinch thumb and index over a painted shape, drag, then open to drop |
 | Scale and rotate | Keep the shape pinched, pinch with the second hand, then change hand distance and angle |
+| Create a 3D extrusion | Point inside a filled closed shape and press `E` |
+| Manipulate a 3D object | Drag with one pinch; use two pinches to scale, spin, and tilt |
+| Decrease / increase 3D depth | `-` / `+` |
 | Save | Toolbar `SAVE` or `S` |
 | Undo / Redo | Toolbar buttons or `Z` / `Y` |
 | Clear | Toolbar `CLEAR` or `C` |
 | Thinner / thicker brush | `[` / `]` |
 | Show / hide controls guide | `H` |
 | Quit | `Q` or `Esc` |
-
-## Train your own gesture model
-
-Install the ML extra:
-
-```bash
-pip install -e ".[ml,dev]"
-```
-
-Collect several slightly different samples for each label. A useful first dataset is 300 samples per class:
-
-```bash
-gesture-collect --label idle --samples 300
-gesture-collect --label draw --samples 300
-gesture-collect --label erase --samples 300
-gesture-collect --label pinch --samples 300
-gesture-collect --label open_palm --samples 300
-```
-
-Train and evaluate the MLP:
-
-```bash
-gesture-train --epochs 60
-gesture-canvas --model models/gesture_mlp.pt
-```
-
-The raw camera images are not stored. The dataset contains only normalized `(x, y, z)` landmark features. Generated datasets, model weights, and drawings are ignored by Git by default.
 
 ## Project structure
 
@@ -110,11 +87,9 @@ gesture_canvas/
   app.py          real-time application loop
   canvas.py       drawing, compositing, undo/redo, export
   interaction.py  one- and two-hand manipulation coordination
-  gestures.py     explainable baseline classifier
+  spatial.py      3D extrusion, projection, shading, and manipulation
+  gestures.py     deterministic hand-pose rules
   landmarks.py    feature extraction and coordinate conversion
-  collect.py      personal dataset collection
-  model.py        optional PyTorch MLP and inference
-  train.py        training and holdout evaluation
 tests/            fast unit tests that do not require a webcam
 ```
 
@@ -126,7 +101,7 @@ pytest
 
 ## Current scope
 
-Version `0.1.0` recognizes static hand poses. A natural next milestone is a temporal 1D CNN or LSTM that receives a short sequence of landmarks and recognizes dynamic commands such as undo and redo.
+Version `0.1.0` recognizes static hand poses and supports lightweight 3D extrusion. The 3D workspace currently creates independent extruded objects; drawing directly on a rotated object's surface is a future milestone.
 
 ## Privacy
 

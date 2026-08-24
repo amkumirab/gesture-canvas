@@ -3,8 +3,8 @@ import pytest
 from gesture_canvas.gestures import (
     DrawGestureStabilizer,
     Gesture,
+    GestureRecognizer,
     PinchDetector,
-    RuleBasedGestureClassifier,
 )
 from gesture_canvas.landmarks import Landmark
 
@@ -25,23 +25,27 @@ def make_hand(extended: tuple[bool, bool, bool, bool], pinch: bool = False):
 
 
 def test_index_finger_means_draw():
-    gesture, confidence = RuleBasedGestureClassifier().classify(make_hand((True, False, False, False)))
+    gesture, confidence = GestureRecognizer().recognize(
+        make_hand((True, False, False, False))
+    )
     assert gesture is Gesture.DRAW
     assert confidence >= 0.8
 
 
 def test_two_fingers_mean_erase():
-    gesture, _ = RuleBasedGestureClassifier().classify(make_hand((True, True, False, False)))
+    gesture, _ = GestureRecognizer().recognize(make_hand((True, True, False, False)))
     assert gesture is Gesture.ERASE
 
 
 def test_pinch_takes_priority():
-    gesture, _ = RuleBasedGestureClassifier().classify(make_hand((True, False, False, False), pinch=True))
+    gesture, _ = GestureRecognizer().recognize(
+        make_hand((True, False, False, False), pinch=True)
+    )
     assert gesture is Gesture.PINCH
 
 
 def test_open_palm_is_not_drawing():
-    gesture, _ = RuleBasedGestureClassifier().classify(make_hand((True, True, True, True)))
+    gesture, _ = GestureRecognizer().recognize(make_hand((True, True, True, True)))
     assert gesture is Gesture.OPEN_PALM
 
 
@@ -52,7 +56,7 @@ def test_horizontal_index_finger_still_means_draw():
     hand[6] = Landmark(0.50, 0.50)
     hand[8] = Landmark(0.75, 0.50)
     hand[4] = Landmark(0.20, 0.20)
-    gesture, _ = RuleBasedGestureClassifier().classify(hand)
+    gesture, _ = GestureRecognizer().recognize(hand)
     assert gesture is Gesture.DRAW
 
 

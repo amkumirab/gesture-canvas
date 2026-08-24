@@ -16,13 +16,12 @@ from .controls import DEFAULT_BRUSH_SIZE, adjust_brush_size
 from .gestures import (
     DrawGestureStabilizer,
     Gesture,
+    GestureRecognizer,
     PinchDetector,
-    RuleBasedGestureClassifier,
 )
 from .help_overlay import draw_help_overlay
 from .interaction import GrabCoordinator, PinchHand
 from .landmarks import to_pixel
-from .model import NeuralGesturePredictor
 from .smoothing import AdaptiveSmoother
 from .toolbar import DwellSelector, Toolbar, ToolButton
 
@@ -50,7 +49,6 @@ class HandFrame:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Draw in the air using hand gestures.")
     parser.add_argument("--camera", type=int, default=0, help="Webcam index (default: 0)")
-    parser.add_argument("--model", type=Path, help="Optional trained .pt gesture model")
     parser.add_argument("--output", type=Path, default=Path("outputs"), help="Saved image folder")
     parser.add_argument("--mirror", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
@@ -97,11 +95,7 @@ def hand_key(hand: DetectedHand, index: int, used: set[str]) -> str:
 
 def main() -> None:
     args = parse_args()
-    classifier = (
-        NeuralGesturePredictor(args.model)
-        if args.model
-        else RuleBasedGestureClassifier()
-    )
+    recognizer = GestureRecognizer()
     camera = open_camera(args.camera)
     try:
         tracker = create_hand_tracker()
@@ -123,7 +117,7 @@ def main() -> None:
     drawing_hand_id: str | None = None
     hover_key: str | None = None
     hover_progress = 0.0
-    status = "Pinch with one hand to move; pinch with two hands to scale and rotate"
+    status = "Draw a closed shape, point at it, then press E to extrude"
     status_until = time.monotonic() + 5
     draw_blocked_until = 0.0
     previous_time = time.monotonic()
@@ -155,7 +149,9 @@ def main() -> None:
                 pinch_detector = pinch_detectors.setdefault(key, PinchDetector())
                 smoother = smoothers.setdefault(key, AdaptiveSmoother())
                 stabilizer = draw_stabilizers.setdefault(key, DrawGestureStabilizer())
-                raw_gesture, confidence = classifier.classify(detected_hand.landmarks)
+                raw_gesture, confidence = recognizer.recognize(
+                    detected_hand.landmarks
+                )
                 pinching, pinch_started, pinch_ended, _ = pinch_detector.update(
                     detected_hand.landmarks
                 )
@@ -291,7 +287,25 @@ def main() -> None:
                     2,
                     cv2.LINE_AA,
                 )
-                if canvas.is_transforming and canvas.transform_info:
+                if canvas.selected_is_spatial and canvas.spatial_transform_info:
+                    scale, rotation_x, rotation_y, rotation_z = (
+                        canvas.spatial_transform_info
+                    )
+                    depth = canvas.selected_spatial_depth or 0
+                    cv2.putText(
+                        display,
+                        (
+                            f"3D {scale:.2f}x  tilt {rotation_x:+.0f}/"
+                            f"{rotation_y:+.0f}  spin {rotation_z:+.0f}  depth {depth:.0f}"
+                        ),
+                        (max(8, x), max(toolbar.height + 24, y - 12)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.52,
+                        (80, 220, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+                elif canvas.is_transforming and canvas.transform_info:
                     scale, rotation = canvas.transform_info
                     cv2.putText(
                         display,
@@ -350,7 +364,8 @@ def main() -> None:
             previous_time = now
             label = (
                 f"{display_gesture.value}  {display_confidence:.0%}   "
-                f"brush {brush_size}px   hands {len(hands)}   FPS {fps:.0f}"
+                f"brush {brush_size}px   3D {canvas.spatial_object_count}   "
+                f"hands {len(hands)}   FPS {fps:.0f}"
             )
             cv2.putText(
                 display,
@@ -402,6 +417,31 @@ def main() -> None:
                 status_until = time.monotonic() + 2
             elif key == ord("h"):
                 show_help = not show_help
+            elif key == ord("e"):
+                cursor_hand = hands_by_key.get(drawing_hand_id or "")
+                if cursor_hand is None and hands:
+                    cursor_hand = max(hands, key=lambda hand: hand.confidence)
+                if cursor_hand is None:
+                    status = "Show a hand and point at a closed shape first"
+                else:
+                    grab_coordinator.reset(canvas)
+                    if canvas.extrude_at(cursor_hand.cursor, selection_radius=32):
+                        status = "3D extrusion created; pinch it to move or rotate"
+                    else:
+                        status = "Point inside a filled closed shape and press E"
+                status_until = time.monotonic() + 3
+            elif key in (ord("-"), ord("_")):
+                if canvas.adjust_extrusion_depth(-6):
+                    status = f"3D depth: {canvas.selected_spatial_depth:.0f}"
+                else:
+                    status = "Select or create a 3D shape first"
+                status_until = time.monotonic() + 2
+            elif key in (ord("="), ord("+")):
+                if canvas.adjust_extrusion_depth(6):
+                    status = f"3D depth: {canvas.selected_spatial_depth:.0f}"
+                else:
+                    status = "Select or create a 3D shape first"
+                status_until = time.monotonic() + 2
     finally:
         tracker.close()
         camera.release()

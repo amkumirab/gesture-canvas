@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gesture-canvas"
 version = "0.1.0"
-description = "A real-time, gesture-controlled drawing canvas with an optional PyTorch classifier."
+description = "A real-time gesture-controlled 2D and 3D drawing canvas."
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 license = { text = "MIT" }
@@ -16,13 +16,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ml = ["torch>=2.2,<3"]
 dev = ["pytest>=8,<9", "pytest-cov>=5,<7"]
 
 [project.scripts]
 gesture-canvas = "gesture_canvas.app:main"
-gesture-collect = "gesture_canvas.collect:main"
-gesture-train = "gesture_canvas.train:main"
 
 [tool.setuptools.packages.find]
 include = ["gesture_canvas*"]

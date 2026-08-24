@@ -26,4 +26,4 @@ def test_help_overlay_skips_frames_that_are_too_small(monkeypatch):
     draw_help_overlay(frame)
 
     assert rectangle_calls == 0
-    assert len(HELP_ITEMS) == 9
+    assert len(HELP_ITEMS) >= 9

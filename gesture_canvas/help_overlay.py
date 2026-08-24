@@ -9,9 +9,11 @@ import numpy as np
 HELP_ITEMS = (
     ("Draw", "Raise index finger"),
     ("Erase", "Raise index and middle fingers"),
+    ("Create 3D shape", "Point inside a closed shape, then E"),
     ("Select tool", "Point at toolbar and hold"),
     ("Move", "Pinch a drawing and drag"),
     ("Scale / rotate", "Pinch the drawing with both hands"),
+    ("3D depth", "- shallower    + deeper"),
     ("Brush size", "[ thinner    ] thicker"),
     ("Undo / redo", "Z / Y"),
     ("Save / clear", "S / C"),
@@ -39,10 +41,10 @@ def draw_help_overlay(frame: np.ndarray, content_top: int = 74) -> None:
 
     cv2.putText(
         frame,
-        "CONTROLS",
+        "CONTROLS  [H] CLOSE",
         (left + 18, top + 34),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.72,
+        0.72 if width >= 500 else 0.46,
         (80, 220, 255),
         2,
         cv2.LINE_AA,

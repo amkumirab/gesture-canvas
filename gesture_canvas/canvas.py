@@ -9,11 +9,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from .spatial import SpatialScene, SpatialSnapshot
+
 
 @dataclass(slots=True)
 class CanvasSnapshot:
     strokes: np.ndarray
     mask: np.ndarray
+    spatial: SpatialSnapshot
 
 
 @dataclass(slots=True)
@@ -68,6 +71,7 @@ class DrawingCanvas:
         self._last_point: tuple[int, int] | None = None
         self._paint_stroke: StrokeState | None = None
         self._move: MoveState | None = None
+        self.spatial = SpatialScene(width, height)
 
     @property
     def can_undo(self) -> bool:
@@ -79,23 +83,45 @@ class DrawingCanvas:
 
     @property
     def is_moving(self) -> bool:
-        return self._move is not None
+        return self._move is not None or self.spatial.is_moving
 
     @property
     def move_bounds(self) -> tuple[int, int, int, int] | None:
-        if self._move is None:
-            return None
-        return self._move.rendered_bounds
+        if self._move is not None:
+            return self._move.rendered_bounds
+        return self.spatial.selected_bounds
 
     @property
     def transform_info(self) -> tuple[float, float] | None:
-        if self._move is None:
+        if self._move is not None:
+            return self._move.scale, self._move.rotation
+        spatial_info = self.spatial.transform_info
+        if spatial_info is None:
             return None
-        return self._move.scale, self._move.rotation
+        scale, _, _, rotation_z = spatial_info
+        return scale, rotation_z
+
+    @property
+    def spatial_transform_info(self) -> tuple[float, float, float, float] | None:
+        return self.spatial.transform_info
 
     @property
     def is_transforming(self) -> bool:
-        return self._move is not None and self._move.transform is not None
+        return (
+            self._move is not None and self._move.transform is not None
+        ) or self.spatial.is_transforming
+
+    @property
+    def spatial_object_count(self) -> int:
+        return self.spatial.object_count
+
+    @property
+    def selected_is_spatial(self) -> bool:
+        return self._move is None and self.spatial.selected_index is not None
+
+    @property
+    def selected_spatial_depth(self) -> float | None:
+        return self.spatial.selected_depth
 
     def begin_stroke(self, point: tuple[int, int]) -> None:
         self.end_move()
@@ -158,6 +184,8 @@ class DrawingCanvas:
             raise ValueError("selection_radius cannot be negative")
         self.end_stroke()
         self.end_move()
+        if self.spatial.begin_move(point):
+            return True
         binary = (self.mask > 0).astype(np.uint8)
         if not np.any(binary):
             return False
@@ -184,7 +212,7 @@ class DrawingCanvas:
         base_mask[component] = 0
         self._move = MoveState(
             original=original,
-            base=CanvasSnapshot(base_strokes, base_mask),
+            base=CanvasSnapshot(base_strokes, base_mask, self.spatial.snapshot()),
             selected_strokes=selected_strokes.astype(np.uint8),
             selected_mask=selected_mask,
             anchor=point,
@@ -197,6 +225,13 @@ class DrawingCanvas:
     def update_move(self, point: tuple[int, int]) -> bool:
         """Move the selected component relative to its initial grab point."""
 
+        if self.spatial.is_moving:
+            before = None if self.spatial.history_recorded else self._snapshot()
+            changed = self.spatial.update_move(point)
+            if changed and before is not None:
+                self._record_undo(before)
+                self.spatial.mark_history_recorded()
+            return changed
         if self._move is None:
             return False
         if self._move.transform is not None:
@@ -220,6 +255,8 @@ class DrawingCanvas:
 
         if minimum_distance <= 0:
             raise ValueError("minimum_distance must be positive")
+        if self.spatial.is_moving:
+            return self.spatial.begin_transform(first, second, minimum_distance)
         if self._move is None:
             return False
         distance = hypot(second[0] - first[0], second[1] - first[1])
@@ -248,6 +285,18 @@ class DrawingCanvas:
 
         if not 0 < minimum_scale <= maximum_scale:
             raise ValueError("Expected 0 < minimum_scale <= maximum_scale")
+        if self.spatial.is_moving:
+            before = None if self.spatial.history_recorded else self._snapshot()
+            changed = self.spatial.update_transform(
+                first,
+                second,
+                minimum_scale,
+                maximum_scale,
+            )
+            if changed and before is not None:
+                self._record_undo(before)
+                self.spatial.mark_history_recorded()
+            return changed
         if self._move is None or self._move.transform is None:
             return False
         transform = self._move.transform
@@ -284,6 +333,8 @@ class DrawingCanvas:
     def end_transform(self, remaining_anchor: tuple[int, int] | None = None) -> bool:
         """Leave two-hand mode while optionally continuing with one-hand movement."""
 
+        if self.spatial.is_transforming:
+            return self.spatial.end_transform(remaining_anchor)
         if self._move is None or self._move.transform is None:
             return False
         self._move.transform = None
@@ -295,6 +346,8 @@ class DrawingCanvas:
     def end_move(self) -> bool:
         """Finish a move operation and report whether anything changed."""
 
+        if self.spatial.is_moving:
+            return self.spatial.end_move()
         if self._move is None:
             return False
         changed = self._move.history_recorded
@@ -304,11 +357,68 @@ class DrawingCanvas:
     def clear(self) -> None:
         self.end_stroke()
         self.end_move()
-        if not np.any(self.mask):
+        if not np.any(self.mask) and self.spatial.object_count == 0:
             return
         self._push_undo()
         self.strokes.fill(0)
         self.mask.fill(0)
+        self.spatial.clear()
+
+    def extrude_at(self, point: tuple[int, int], selection_radius: int = 18) -> bool:
+        """Replace a closed painted component near ``point`` with a 3D extrusion."""
+
+        if selection_radius < 0:
+            raise ValueError("selection_radius cannot be negative")
+        self.end_stroke()
+        self.end_move()
+        binary = (self.mask > 0).astype(np.uint8)
+        if not np.any(binary):
+            return False
+        _, labels = cv2.connectedComponents(binary, connectivity=8)
+        label = self._nearest_label(labels, point, selection_radius)
+        if label == 0:
+            return False
+
+        component = labels == label
+        component_mask = (component.astype(np.uint8) * 255)
+        contours, _ = cv2.findContours(
+            component_mask,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
+        )
+        if not contours:
+            return False
+        contour = max(contours, key=cv2.contourArea)
+        x, y, width, height = cv2.boundingRect(contour)
+        fill_ratio = float(np.count_nonzero(component)) / max(width * height, 1)
+        if (
+            width < 16
+            or height < 16
+            or abs(cv2.contourArea(contour)) < 250
+            or fill_ratio < 0.28
+        ):
+            return False
+
+        pixels = self.strokes[component]
+        color = tuple(int(value) for value in np.median(pixels, axis=0))
+        original = self._snapshot()
+        if not self.spatial.add_extrusion(contour, color):
+            return False
+        self._record_undo(original)
+        self.strokes[component] = 0
+        self.mask[component] = 0
+        return True
+
+    def adjust_extrusion_depth(self, change: float) -> bool:
+        """Adjust the selected 3D object's depth as one undoable operation."""
+
+        self.end_stroke()
+        self.end_move()
+        original = self._snapshot()
+        if not self.spatial.adjust_depth(change):
+            return False
+        self._record_undo(original)
+        return True
 
     def undo(self) -> bool:
         self.end_stroke()
@@ -334,7 +444,9 @@ class DrawingCanvas:
         result = frame.copy()
         alpha = self.mask.astype(np.float32)[:, :, None] / 255.0
         blended = result.astype(np.float32) * (1.0 - alpha) + self.strokes * alpha
-        return np.clip(blended, 0, 255).astype(np.uint8)
+        composited = np.clip(blended, 0, 255).astype(np.uint8)
+        self.spatial.render(composited)
+        return composited
 
     def export(self, path: Path) -> Path:
         """Save strokes on a white background, independent of the webcam."""
@@ -343,12 +455,18 @@ class DrawingCanvas:
         white = np.full_like(self.strokes, 255)
         alpha = self.mask.astype(np.float32)[:, :, None] / 255.0
         image = white.astype(np.float32) * (1.0 - alpha) + self.strokes * alpha
-        if not cv2.imwrite(str(path), np.clip(image, 0, 255).astype(np.uint8)):
+        rendered = np.clip(image, 0, 255).astype(np.uint8)
+        self.spatial.render(rendered)
+        if not cv2.imwrite(str(path), rendered):
             raise OSError(f"Could not save drawing to {path}")
         return path
 
     def _snapshot(self) -> CanvasSnapshot:
-        return CanvasSnapshot(self.strokes.copy(), self.mask.copy())
+        return CanvasSnapshot(
+            self.strokes.copy(),
+            self.mask.copy(),
+            self.spatial.snapshot(),
+        )
 
     def _push_undo(self) -> None:
         self._record_undo(self._snapshot())
@@ -367,6 +485,7 @@ class DrawingCanvas:
     def _restore(self, snapshot: CanvasSnapshot) -> None:
         self.strokes = snapshot.strokes.copy()
         self.mask = snapshot.mask.copy()
+        self.spatial.restore(snapshot.spatial)
 
     def _continuous_previous(
         self,

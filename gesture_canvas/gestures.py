@@ -1,4 +1,4 @@
-"""Deterministic gesture baseline used before a trained model is available."""
+"""Deterministic hand-pose recognition rules."""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ class PinchDetector:
 
 
 class DrawGestureStabilizer:
-    """Bridge brief pose-classification dropouts without delaying deliberate tools."""
+    """Bridge brief tracking dropouts without delaying deliberate tools."""
 
     def __init__(self, grace_seconds: float = 0.14, erase_confirm_frames: int = 2) -> None:
         if grace_seconds < 0:
@@ -134,19 +134,15 @@ class DrawGestureStabilizer:
         self._erase_count = 0
 
 
-class RuleBasedGestureClassifier:
-    """Fast and explainable pose classifier for the MVP.
-
-    The learned PyTorch classifier uses the same output labels and can replace
-    this class at runtime without changing the drawing application.
-    """
+class GestureRecognizer:
+    """Recognize supported hand poses using transparent geometry rules."""
 
     def __init__(self, pinch_ratio: float = 0.32) -> None:
         if not 0 < pinch_ratio < 1:
             raise ValueError("pinch_ratio must be between zero and one")
         self.pinch_ratio = pinch_ratio
 
-    def classify(self, landmarks: Sequence[Landmark]) -> tuple[Gesture, float]:
+    def recognize(self, landmarks: Sequence[Landmark]) -> tuple[Gesture, float]:
         if len(landmarks) != 21:
             raise ValueError(f"Expected 21 hand landmarks, received {len(landmarks)}")
 

@@ -7,10 +7,5 @@ htmlcov/
 .venv/
 dist/
 build/
-data/*.csv
-models/*.pt
-models/*.task
 outputs/*.png
-!data/.gitkeep
-!models/.gitkeep
 !outputs/.gitkeep
