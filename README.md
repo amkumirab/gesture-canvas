@@ -19,6 +19,7 @@ The project works immediately with deterministic hand-geometry rules and process
 - Grab and move any connected drawing directly with a pinch-and-drag gesture
 - Stable pinch-center control with short hand-tracking dropout recovery
 - Scale and rotate a grabbed drawing by pinching it with both hands
+- Intent-locked 3D transforms that isolate scale, spin, and tilt
 - Smoothly return to one-hand movement when either hand releases
 - Adaptive cursor smoothing and short dropout recovery for continuous strokes
 - Adjustable 2-30 px brush with an accurate on-screen size preview
@@ -75,6 +76,8 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Scale | Keep two pinches held and move the hands apart or together |
 | Spin | Turn the imaginary line between the two pinches like a steering wheel |
 | Tilt | Move both pinches together, or move one hand closer than the other |
+| Switch transform control | Release only the second pinch, then pinch again |
+| Reset 3D rotation | `R` |
 | Create a 3D layer | Point inside a filled closed shape and press `E` |
 | Move along X/Y | Pinch the layer and drag left, right, up, or down |
 | Move along Z | Keep pinching and move your hand closer to or farther from the camera |
@@ -110,7 +113,7 @@ pytest
 
 ## Current scope
 
-Version `0.2.0` adds dropout-resistant manipulation, separate drawing and pinch smoothing, clearer live controls, and independent flat drawings in a perspective 3D workspace. Moving a hand toward or away from the camera controls the selected layer's Z position.
+Version `0.2.1` adds intent-locked and smoothed 3D rotation, active-axis feedback, safe tilt limits, rotation reset, and dropout-safe transform rebasing. Moving a hand toward or away from the camera controls the selected layer's Z position.
 
 ## Privacy
 

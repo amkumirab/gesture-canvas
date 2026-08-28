@@ -63,19 +63,54 @@ def test_positive_z_appears_larger_and_is_drawn_in_front():
     np.testing.assert_array_equal(frame[80, 100], (0, 255, 0))
 
 
-def test_two_hand_transform_scales_spins_and_tilts_shape():
+def test_two_hand_transform_locks_scale_without_unwanted_rotation():
     scene = SpatialScene(240, 180)
     scene.add_plane(square_contour(), (60, 120, 240))
     assert scene.begin_move((100, 80))
     assert scene.begin_transform((80, 60), (120, 60))
 
-    assert scene.update_transform((70, 80), (150, 40))
+    assert scene.update_transform((60, 60), (140, 60))
     scale, rotation_x, rotation_y, rotation_z = scene.transform_info
 
-    assert scale > 2
-    assert rotation_x == 0
-    assert rotation_y != 0
-    assert rotation_z != 0
+    assert scene.transform_control == "scale"
+    assert 1 < scale < 2
+    assert (rotation_x, rotation_y, rotation_z) == (0, 0, 0)
+
+    scene.update_transform((100, 20), (100, 100))
+    assert scene.transform_control == "scale"
+    assert scene.transform_info[1:] == (0, 0, 0)
+
+
+def test_repinching_allows_spin_without_changing_scale_or_tilt():
+    scene = SpatialScene(240, 180)
+    scene.add_plane(square_contour(), (60, 120, 240))
+    assert scene.begin_move((100, 80))
+    assert scene.begin_transform((60, 60), (140, 60))
+    scene.update_transform((40, 60), (160, 60))
+    scale_before = scene.transform_info[0]
+    assert scene.end_transform()
+
+    assert scene.begin_transform((60, 60), (140, 60))
+    assert scene.update_transform((100, 20), (100, 100))
+    scale, rotation_x, rotation_y, rotation_z = scene.transform_info
+    assert scene.transform_control == "spin"
+    assert scale == scale_before
+    assert (rotation_x, rotation_y) == (0, 0)
+    assert rotation_z > 30
+
+
+def test_pair_vertical_motion_locks_x_tilt_only():
+    scene = SpatialScene(240, 180)
+    scene.add_plane(square_contour(), (60, 120, 240))
+    assert scene.begin_move((100, 80))
+    assert scene.begin_transform((60, 60), (140, 60))
+
+    assert scene.update_transform((60, 90), (140, 90))
+    scale, rotation_x, rotation_y, rotation_z = scene.transform_info
+    assert scene.transform_control == "tilt_x"
+    assert scale == 1
+    assert rotation_x > 10
+    assert (rotation_y, rotation_z) == (0, 0)
 
 
 def test_two_hand_depth_difference_creates_visible_y_tilt():
@@ -96,9 +131,10 @@ def test_two_hand_depth_difference_creates_visible_y_tilt():
         second_depth_signal=0.18,
     )
     scale, rotation_x, rotation_y, rotation_z = scene.transform_info
+    assert scene.transform_control == "tilt_y"
     assert scale == 1
     assert rotation_x == 0
-    assert rotation_y > 30
+    assert rotation_y > 15
     assert rotation_z == 0
 
 
@@ -109,7 +145,32 @@ def test_two_hand_transform_filters_small_jitter():
     assert scene.begin_transform((70, 70), (150, 70))
 
     assert not scene.update_transform((71, 72), (151, 72))
+    assert scene.transform_control == "waiting"
     assert scene.transform_info == (1.0, 0.0, 0.0, 0.0)
+
+
+def test_tilt_is_smoothed_and_clamped_before_edge_on():
+    scene = SpatialScene(240, 180)
+    scene.add_plane(square_contour(), (60, 120, 240))
+    assert scene.begin_move((100, 80))
+    assert scene.begin_transform((60, 60), (140, 60))
+
+    for _ in range(12):
+        scene.update_transform((60, 260), (140, 260))
+    assert 68 < scene.transform_info[1] <= 72
+
+
+def test_reset_selected_rotation_restores_front_view():
+    scene = SpatialScene(240, 180)
+    scene.add_plane(square_contour(), (60, 120, 240))
+    shape = scene.objects[0]
+    shape.rotation_x = 25
+    shape.rotation_y = -30
+    shape.rotation_z = 45
+
+    assert scene.reset_selected_rotation()
+    assert scene.transform_info == (1.0, 0.0, 0.0, 0.0)
+    assert not scene.reset_selected_rotation()
 
 
 def test_z_position_is_clamped_and_snapshot_restores_it():

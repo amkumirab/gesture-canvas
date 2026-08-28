@@ -134,4 +134,40 @@ def test_coordinator_manipulates_a_spatial_shape_in_xyz():
     coordinator.update(canvas, [first, second])
     scale, _, _, rotation_z = canvas.spatial_transform_info
     assert scale > 1
-    assert rotation_z != 0
+    assert canvas.spatial_transform_control == "scale"
+    assert rotation_z == 0
+
+
+def test_spatial_transform_freezes_and_rebases_during_hand_dropout():
+    canvas = DrawingCanvas(240, 180)
+    for point in [
+        (60, 45),
+        (180, 45),
+        (180, 135),
+        (60, 135),
+        (60, 45),
+        (61, 45),
+    ]:
+        canvas.add_point(point, (60, 120, 240), 7)
+    canvas.end_stroke()
+    assert canvas.promote_to_3d((120, 90))
+
+    coordinator = GrabCoordinator(missing_grace_frames=3)
+    first = PinchHand("left", (100, 90), pinching=True, started=True)
+    second = PinchHand("right", (180, 90), pinching=True, started=True)
+    assert coordinator.update(canvas, [first])
+    assert coordinator.update(canvas, [first, second])
+    turned_second = PinchHand("right", (140, 130), pinching=True)
+    coordinator.update(canvas, [first, turned_second])
+    rotation_before = canvas.spatial_transform_info[3]
+    assert rotation_before != 0
+
+    moved_first = PinchHand("left", (40, 40), pinching=True)
+    coordinator.update(canvas, [moved_first])
+    assert coordinator.recovering_tracking
+    assert canvas.spatial_transform_info[3] == rotation_before
+
+    recovered_second = PinchHand("right", (120, 40), pinching=True)
+    coordinator.update(canvas, [moved_first, recovered_second])
+    assert not coordinator.recovering_tracking
+    assert canvas.spatial_transform_info[3] == rotation_before

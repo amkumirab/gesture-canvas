@@ -16,6 +16,8 @@ HELP_ITEMS = (
     ("Scale", "Two pinches: move hands apart / together"),
     ("Spin", "Two pinches: turn the line between hands"),
     ("Tilt X / Y", "Move both hands together or change hand depth"),
+    ("Switch transform", "Release second pinch, then pinch again"),
+    ("Reset rotation", "R"),
     ("Tracking recovery", "Keep pinching through brief hand loss"),
     ("3D guides", "Shown automatically for selected layer"),
     ("Move Z by key", "- farther    + closer"),

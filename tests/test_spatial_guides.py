@@ -48,6 +48,20 @@ def test_spatial_guides_draw_axes_and_depth_ruler():
     assert np.count_nonzero(frame[:, -120:]) > 0
 
 
+def test_spatial_guides_highlight_locked_rotation_axis():
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    draw_spatial_guides(
+        frame,
+        make_guide(),
+        content_top=74,
+        active_control="tilt_x",
+    )
+
+    x_axis_brightness = int(frame[100, 145].sum())
+    y_axis_brightness = int(frame[125, 120].sum())
+    assert x_axis_brightness > y_axis_brightness
+
+
 def test_spatial_guides_skip_missing_or_tiny_views():
     frame = np.zeros((80, 120, 3), dtype=np.uint8)
 

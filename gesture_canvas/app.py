@@ -354,8 +354,14 @@ def main() -> None:
                         cv2.LINE_AA,
                     )
 
+            spatial_control = canvas.spatial_transform_control
             if canvas.selected_is_spatial:
-                draw_spatial_guides(display, canvas.spatial_guide, toolbar.height)
+                draw_spatial_guides(
+                    display,
+                    canvas.spatial_guide,
+                    toolbar.height,
+                    active_control=spatial_control,
+                )
 
             if canvas.is_transforming:
                 manipulation_mode = "transform"
@@ -371,6 +377,7 @@ def main() -> None:
                 canvas.spatial_transform_info if canvas.selected_is_spatial else None,
                 grab_coordinator.recovering_tracking,
                 toolbar.height,
+                active_control=spatial_control,
             )
 
             hands_by_key = {hand.key: hand for hand in hands}
@@ -472,6 +479,13 @@ def main() -> None:
                 status_until = time.monotonic() + 2
             elif key == ord("h"):
                 show_help = not show_help
+            elif key == ord("r"):
+                grab_coordinator.reset(canvas)
+                if canvas.reset_spatial_rotation():
+                    status = "3D rotation reset"
+                else:
+                    status = "Select a rotated 3D shape first"
+                status_until = time.monotonic() + 2
             elif key == ord("e"):
                 cursor_hand = hands_by_key.get(drawing_hand_id or "")
                 if cursor_hand is None and hands:

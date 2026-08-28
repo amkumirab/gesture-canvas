@@ -34,6 +34,7 @@ def draw_spatial_guides(
     frame: np.ndarray,
     guide: SpatialGuide | None,
     content_top: int = 74,
+    active_control: str | None = None,
 ) -> None:
     """Draw projected XYZ axes and a responsive Z-position ruler in-place."""
 
@@ -43,24 +44,62 @@ def draw_spatial_guides(
     if height < 100 or width < 180:
         return
 
-    _draw_axis(frame, guide.origin, guide.x_axis, "X", X_COLOR, (7, -7))
-    _draw_axis(frame, guide.origin, guide.y_axis, "Y", Y_COLOR, (7, 16))
+    active_axis = {
+        "tilt_x": "X",
+        "tilt_y": "Y",
+        "spin": "Z",
+    }.get(active_control)
+    _draw_axis(
+        frame,
+        guide.origin,
+        guide.x_axis,
+        "X",
+        X_COLOR,
+        (7, -7),
+        active_axis,
+    )
+    _draw_axis(
+        frame,
+        guide.origin,
+        guide.y_axis,
+        "Y",
+        Y_COLOR,
+        (7, 16),
+        active_axis,
+    )
+    z_color = _axis_color(Z_COLOR, active_axis, "Z")
+    z_thickness = 4 if active_axis == "Z" else 2
     if hypot(
         guide.z_axis[0] - guide.origin[0],
         guide.z_axis[1] - guide.origin[1],
     ) >= 6:
-        _draw_axis(frame, guide.origin, guide.z_axis, "Z", Z_COLOR, (-15, -7))
+        _draw_axis(
+            frame,
+            guide.origin,
+            guide.z_axis,
+            "Z",
+            Z_COLOR,
+            (-15, -7),
+            active_axis,
+        )
     else:
-        cv2.circle(frame, guide.origin, 7, Z_COLOR, 2, cv2.LINE_AA)
-        cv2.circle(frame, guide.origin, 2, Z_COLOR, -1, cv2.LINE_AA)
+        cv2.circle(
+            frame,
+            guide.origin,
+            7,
+            z_color,
+            z_thickness,
+            cv2.LINE_AA,
+        )
+        cv2.circle(frame, guide.origin, 2, z_color, -1, cv2.LINE_AA)
         cv2.putText(
             frame,
             "Z",
             (guide.origin[0] - 17, guide.origin[1] - 8),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.44,
-            Z_COLOR,
-            1,
+            z_color,
+            2 if active_axis == "Z" else 1,
             cv2.LINE_AA,
         )
 
@@ -150,13 +189,16 @@ def _draw_axis(
     label: str,
     color: tuple[int, int, int],
     label_offset: tuple[int, int],
+    active_axis: str | None,
 ) -> None:
+    axis_color = _axis_color(color, active_axis, label)
+    thickness = 4 if active_axis == label else 2
     cv2.arrowedLine(
         frame,
         origin,
         endpoint,
-        color,
-        2,
+        axis_color,
+        thickness,
         cv2.LINE_AA,
         tipLength=0.22,
     )
@@ -166,7 +208,17 @@ def _draw_axis(
         (endpoint[0] + label_offset[0], endpoint[1] + label_offset[1]),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.44,
-        color,
-        1,
+        axis_color,
+        2 if active_axis == label else 1,
         cv2.LINE_AA,
     )
+
+
+def _axis_color(
+    color: tuple[int, int, int],
+    active_axis: str | None,
+    axis: str,
+) -> tuple[int, int, int]:
+    if active_axis is None or active_axis == axis:
+        return color
+    return tuple(round(channel * 0.38) for channel in color)

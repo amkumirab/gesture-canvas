@@ -106,6 +106,10 @@ class DrawingCanvas:
         return self.spatial.transform_info
 
     @property
+    def spatial_transform_control(self) -> str | None:
+        return self.spatial.transform_control
+
+    @property
     def is_transforming(self) -> bool:
         return (
             self._move is not None and self._move.transform is not None
@@ -452,6 +456,17 @@ class DrawingCanvas:
         self.end_move()
         original = self._snapshot()
         if not self.spatial.adjust_z(change):
+            return False
+        self._record_undo(original)
+        return True
+
+    def reset_spatial_rotation(self) -> bool:
+        """Reset the selected spatial layer rotation as one undoable edit."""
+
+        self.end_stroke()
+        self.end_move()
+        original = self._snapshot()
+        if not self.spatial.reset_selected_rotation():
             return False
         self._record_undo(original)
         return True

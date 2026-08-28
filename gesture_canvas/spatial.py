@@ -61,6 +61,7 @@ class SpatialTransform:
     base_rotation_y: float
     base_rotation_z: float
     start_depth_balance: float | None
+    control: str = "waiting"
 
 
 @dataclass(slots=True)
@@ -124,6 +125,12 @@ class SpatialScene:
         if shape is None:
             return None
         return shape.scale, shape.rotation_x, shape.rotation_y, shape.rotation_z
+
+    @property
+    def transform_control(self) -> str | None:
+        if self._move is None or self._move.transform is None:
+            return None
+        return self._move.transform.control
 
     @property
     def selected_z(self) -> float | None:
@@ -304,38 +311,54 @@ class SpatialScene:
         transform = self._move.transform
         distance = hypot(second[0] - first[0], second[1] - first[1])
         scale_ratio = distance / transform.start_distance
-        if abs(scale_ratio - 1.0) < 0.035:
-            scale_ratio = 1.0
-        scale = float(
-            np.clip(
-                transform.base_scale * scale_ratio,
-                minimum_scale,
-                maximum_scale,
-            )
-        )
         angle = atan2(second[1] - first[1], second[0] - first[0])
         spin_delta = _normalize_angle(degrees(angle - transform.start_angle))
-        if abs(spin_delta) < 2.5:
-            spin_delta = 0.0
-        rotation_z = _normalize_angle(transform.base_rotation_z + spin_delta)
         midpoint = ((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)
-        midpoint_dx = _dead_zone(midpoint[0] - transform.start_midpoint[0], 5.0)
-        midpoint_dy = _dead_zone(midpoint[1] - transform.start_midpoint[1], 5.0)
-        depth_tilt = 0.0
+        midpoint_dx = midpoint[0] - transform.start_midpoint[0]
+        midpoint_dy = midpoint[1] - transform.start_midpoint[1]
+        depth_delta = 0.0
         current_balance = _depth_balance(first_depth_signal, second_depth_signal)
         if transform.start_depth_balance is not None and current_balance is not None:
-            depth_tilt = (current_balance - transform.start_depth_balance) * 120.0
+            depth_delta = current_balance - transform.start_depth_balance
 
-        rotation_x = float(
-            np.clip(transform.base_rotation_x + midpoint_dy * 0.9, -78.0, 78.0)
-        )
-        rotation_y = float(
-            np.clip(
-                transform.base_rotation_y + midpoint_dx * 0.65 + depth_tilt,
-                -78.0,
-                78.0,
+        tilt_x_delta = midpoint_dy * 0.85
+        tilt_y_delta = midpoint_dx * 0.60 + depth_delta * 115.0
+        if transform.control == "waiting":
+            transform.control = _choose_transform_control(
+                scale_ratio,
+                spin_delta,
+                tilt_x_delta,
+                tilt_y_delta,
             )
-        )
+            if transform.control == "waiting":
+                return False
+
+        scale = shape.scale
+        rotation_x = shape.rotation_x
+        rotation_y = shape.rotation_y
+        rotation_z = shape.rotation_z
+        if transform.control == "scale":
+            target = float(
+                np.clip(
+                    transform.base_scale * scale_ratio,
+                    minimum_scale,
+                    maximum_scale,
+                )
+            )
+            scale = _smooth_value(shape.scale, target, 0.52)
+        elif transform.control == "spin":
+            target = _normalize_angle(transform.base_rotation_z + spin_delta)
+            rotation_z = _smooth_angle(shape.rotation_z, target, 0.48)
+        elif transform.control == "tilt_x":
+            target = float(
+                np.clip(transform.base_rotation_x + tilt_x_delta, -72.0, 72.0)
+            )
+            rotation_x = _smooth_value(shape.rotation_x, target, 0.44)
+        elif transform.control == "tilt_y":
+            target = float(
+                np.clip(transform.base_rotation_y + tilt_y_delta, -72.0, 72.0)
+            )
+            rotation_y = _smooth_value(shape.rotation_y, target, 0.44)
         unchanged = (
             abs(scale - shape.scale) < 1e-4
             and abs(rotation_x - shape.rotation_x) < 1e-3
@@ -387,6 +410,23 @@ class SpatialScene:
         if abs(z_position - current_z) < 1e-6:
             return False
         shape.position = x, y, z_position
+        return True
+
+    def reset_selected_rotation(self) -> bool:
+        """Restore the selected layer to a front-facing orientation."""
+
+        shape = self._selected()
+        if shape is None:
+            return False
+        if np.allclose(
+            (shape.rotation_x, shape.rotation_y, shape.rotation_z),
+            (0.0, 0.0, 0.0),
+            atol=1e-4,
+        ):
+            return False
+        shape.rotation_x = 0.0
+        shape.rotation_y = 0.0
+        shape.rotation_z = 0.0
         return True
 
     def render(self, frame: np.ndarray) -> None:
@@ -496,10 +536,35 @@ def _normalize_angle(angle: float) -> float:
     return (angle + 180.0) % 360.0 - 180.0
 
 
-def _dead_zone(value: float, threshold: float) -> float:
-    if abs(value) <= threshold:
-        return 0.0
-    return value - np.sign(value) * threshold
+def _choose_transform_control(
+    scale_ratio: float,
+    spin_delta: float,
+    tilt_x_delta: float,
+    tilt_y_delta: float,
+) -> str:
+    """Lock onto the clearest initial two-hand movement."""
+
+    safe_scale = max(scale_ratio, 1e-6)
+    scores = {
+        "scale": abs(log(safe_scale)) / 0.075,
+        "spin": abs(spin_delta) / 5.0,
+        "tilt_x": abs(tilt_x_delta) / 10.0,
+        "tilt_y": abs(tilt_y_delta) / 10.0,
+    }
+    control, score = max(scores.items(), key=lambda item: item[1])
+    return control if score >= 1.0 else "waiting"
+
+
+def _smooth_value(current: float, target: float, alpha: float) -> float:
+    value = current + (target - current) * alpha
+    return target if abs(target - value) < 1e-3 else value
+
+
+def _smooth_angle(current: float, target: float, alpha: float) -> float:
+    delta = _normalize_angle(target - current)
+    if abs(delta) < 1e-3:
+        return target
+    return _normalize_angle(current + delta * alpha)
 
 
 def _depth_balance(first: float, second: float) -> float | None:

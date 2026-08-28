@@ -12,6 +12,17 @@ def test_manipulation_hud_draws_for_active_modes(mode):
     assert np.count_nonzero(frame) > 0
 
 
+def test_transform_hud_draws_locked_control_feedback():
+    frame = np.zeros((240, 640, 3), dtype=np.uint8)
+    draw_manipulation_hud(
+        frame,
+        "transform",
+        (1.2, 10, -15, 25),
+        active_control="spin",
+    )
+    assert np.count_nonzero(frame) > 0
+
+
 def test_manipulation_hud_stays_hidden_while_idle():
     frame = np.zeros((240, 640, 3), dtype=np.uint8)
     draw_manipulation_hud(frame, "idle")

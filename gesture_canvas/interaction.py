@@ -33,6 +33,7 @@ class GrabCoordinator:
         self.hand_ids: list[str] = []
         self._last_hands: dict[str, PinchHand] = {}
         self._missing_frames: dict[str, int] = {}
+        self._transform_paused = False
 
     @property
     def recovering_tracking(self) -> bool:
@@ -97,10 +98,26 @@ class GrabCoordinator:
         if not active:
             canvas.end_move()
             self.hand_ids.clear()
+            self._transform_paused = False
             return False
 
         if len(active) >= 2:
             first, second = active[:2]
+            self.hand_ids = [first.key, second.key]
+            if self.recovering_tracking:
+                self._transform_paused = canvas.is_transforming
+                return True
+            if self._transform_paused:
+                if canvas.is_transforming:
+                    canvas.end_transform()
+                canvas.begin_transform(
+                    first.cursor,
+                    second.cursor,
+                    first_depth_signal=first.depth_signal,
+                    second_depth_signal=second.depth_signal,
+                )
+                self._transform_paused = False
+                return True
             if not canvas.is_transforming:
                 canvas.begin_transform(
                     first.cursor,
@@ -115,10 +132,10 @@ class GrabCoordinator:
                     first_depth_signal=first.depth_signal,
                     second_depth_signal=second.depth_signal,
                 )
-            self.hand_ids = [first.key, second.key]
             return True
 
         primary = active[0]
+        self._transform_paused = False
         if canvas.is_transforming:
             canvas.end_transform(primary.cursor, primary.depth_signal)
         self.hand_ids = [primary.key]
@@ -154,3 +171,4 @@ class GrabCoordinator:
         self.hand_ids.clear()
         self._last_hands.clear()
         self._missing_frames.clear()
+        self._transform_paused = False

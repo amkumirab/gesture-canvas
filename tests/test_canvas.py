@@ -291,6 +291,24 @@ def test_spatial_z_change_uses_canvas_history():
     assert canvas.selected_spatial_z == original_z
 
 
+def test_spatial_rotation_reset_is_undoable():
+    canvas = DrawingCanvas(160, 140)
+    draw_polygon(
+        canvas,
+        [(35, 35), (125, 35), (125, 105), (35, 105), (35, 35), (36, 35)],
+    )
+    assert canvas.promote_to_3d((80, 70))
+    shape = canvas.spatial.objects[0]
+    shape.rotation_x = 20
+    shape.rotation_y = -25
+    shape.rotation_z = 35
+
+    assert canvas.reset_spatial_rotation()
+    assert canvas.spatial_transform_info == (1.0, 0.0, 0.0, 0.0)
+    assert canvas.undo()
+    assert canvas.spatial_transform_info == (1.0, 20, -25, 35)
+
+
 def test_spatial_shape_xyz_movement_is_undoable():
     canvas = DrawingCanvas(180, 160)
     draw_polygon(

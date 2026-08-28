@@ -12,6 +12,7 @@ def draw_manipulation_hud(
     transform_info: tuple[float, float, float, float] | None = None,
     recovering_tracking: bool = False,
     content_top: int = 74,
+    active_control: str | None = None,
 ) -> None:
     """Draw a compact gesture hint only while an object is being manipulated."""
 
@@ -22,7 +23,19 @@ def draw_manipulation_hud(
 
     if mode == "transform":
         title = "TWO-HAND TRANSFORM"
-        hint = "APART: SCALE   TURN: SPIN   MOVE PAIR: TILT"
+        control_labels = {
+            "scale": "SCALE",
+            "spin": "SPIN Z",
+            "tilt_x": "TILT X",
+            "tilt_y": "TILT Y",
+        }
+        if active_control in control_labels:
+            hint = (
+                f"{control_labels[active_control]} LOCKED   "
+                "RELEASE SECOND PINCH TO SWITCH"
+            )
+        else:
+            hint = "MOVE ONE WAY: APART=SCALE  TURN=SPIN  PAIR=TILT"
     elif mode == "move-3d":
         title = "3D MOVE"
         hint = "DRAG: X/Y   HAND CLOSER/FARTHER: Z"
