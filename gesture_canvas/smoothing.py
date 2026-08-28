@@ -59,3 +59,25 @@ class AdaptiveSmoother:
 
     def reset(self) -> None:
         self._point = None
+
+
+class ScalarSmoother:
+    """Smooth a noisy scalar signal such as apparent palm size."""
+
+    def __init__(self, alpha: float = 0.22) -> None:
+        if not 0 < alpha <= 1:
+            raise ValueError("alpha must be in (0, 1]")
+        self.alpha = alpha
+        self._value: float | None = None
+
+    def update(self, value: float) -> float:
+        if value < 0:
+            raise ValueError("value cannot be negative")
+        if self._value is None:
+            self._value = float(value)
+        else:
+            self._value = self.alpha * value + (1 - self.alpha) * self._value
+        return self._value
+
+    def reset(self) -> None:
+        self._value = None

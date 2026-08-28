@@ -31,7 +31,7 @@ class PinchDetector:
     def __init__(
         self,
         close_ratio: float = 0.34,
-        release_ratio: float = 0.50,
+        release_ratio: float = 0.52,
         close_frames: int = 2,
         release_frames: int = 2,
     ) -> None:
@@ -92,7 +92,7 @@ class PinchDetector:
 class DrawGestureStabilizer:
     """Bridge brief tracking dropouts without delaying deliberate tools."""
 
-    def __init__(self, grace_seconds: float = 0.14, erase_confirm_frames: int = 2) -> None:
+    def __init__(self, grace_seconds: float = 0.18, erase_confirm_frames: int = 2) -> None:
         if grace_seconds < 0:
             raise ValueError("grace_seconds cannot be negative")
         if erase_confirm_frames < 1:

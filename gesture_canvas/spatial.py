@@ -1,9 +1,9 @@
-"""Lightweight extruded-shape scene rendered with OpenCV."""
+"""Perspective scene for flat drawings placed in three-dimensional space."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import atan2, cos, degrees, hypot, radians, sin
+from math import atan2, cos, degrees, hypot, log, radians, sin
 
 import cv2
 import numpy as np
@@ -13,22 +13,20 @@ Color = tuple[int, int, int]
 
 
 @dataclass(slots=True)
-class ExtrudedShape:
+class SpatialShape:
     contour: np.ndarray
     color: Color
-    position: tuple[float, float]
-    depth: float
+    position: tuple[float, float, float]
     scale: float = 1.0
-    rotation_x: float = -18.0
-    rotation_y: float = 24.0
+    rotation_x: float = 0.0
+    rotation_y: float = 0.0
     rotation_z: float = 0.0
 
-    def copy(self) -> ExtrudedShape:
-        return ExtrudedShape(
+    def copy(self) -> SpatialShape:
+        return SpatialShape(
             contour=self.contour.copy(),
             color=self.color,
             position=self.position,
-            depth=self.depth,
             scale=self.scale,
             rotation_x=self.rotation_x,
             rotation_y=self.rotation_y,
@@ -38,8 +36,19 @@ class ExtrudedShape:
 
 @dataclass(slots=True)
 class SpatialSnapshot:
-    objects: list[ExtrudedShape]
+    objects: list[SpatialShape]
     selected_index: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class SpatialGuide:
+    origin: tuple[int, int]
+    x_axis: tuple[int, int]
+    y_axis: tuple[int, int]
+    z_axis: tuple[int, int]
+    z_position: float
+    minimum_z: float
+    maximum_z: float
 
 
 @dataclass(slots=True)
@@ -51,26 +60,39 @@ class SpatialTransform:
     base_rotation_x: float
     base_rotation_y: float
     base_rotation_z: float
+    start_depth_balance: float | None
 
 
 @dataclass(slots=True)
 class SpatialMove:
     object_index: int
     anchor: tuple[int, int]
-    base_position: tuple[float, float]
+    base_position: tuple[float, float, float]
+    start_depth_signal: float | None
     transform: SpatialTransform | None = None
     history_recorded: bool = False
 
 
 class SpatialScene:
-    """Own and manipulate simple meshes made by extruding 2D contours."""
+    """Own and manipulate flat drawings in a perspective 3D workspace."""
+
+    depth_dead_zone = 0.025
+    depth_sensitivity = 1.35
 
     def __init__(self, width: int, height: int) -> None:
         self.width = width
         self.height = height
-        self.objects: list[ExtrudedShape] = []
+        self.objects: list[SpatialShape] = []
         self.selected_index: int | None = None
         self._move: SpatialMove | None = None
+
+    @property
+    def focal_length(self) -> float:
+        return max(self.width, self.height) * 1.8
+
+    @property
+    def z_limits(self) -> tuple[float, float]:
+        return -self.focal_length * 2.0, self.focal_length * 0.6
 
     @property
     def is_moving(self) -> bool:
@@ -94,8 +116,7 @@ class SpatialScene:
         if shape is None:
             return None
         projected, _ = self._project(shape)
-        x, y, width, height = cv2.boundingRect(projected.astype(np.float32))
-        return x, y, width, height
+        return cv2.boundingRect(projected.astype(np.float32))
 
     @property
     def transform_info(self) -> tuple[float, float, float, float] | None:
@@ -105,9 +126,39 @@ class SpatialScene:
         return shape.scale, shape.rotation_x, shape.rotation_y, shape.rotation_z
 
     @property
-    def selected_depth(self) -> float | None:
+    def selected_z(self) -> float | None:
         shape = self._selected()
-        return None if shape is None else shape.depth
+        return None if shape is None else shape.position[2]
+
+    def selected_guide(self, axis_length: float = 54.0) -> SpatialGuide | None:
+        """Return projected local axes and depth range for the selected shape."""
+
+        if axis_length <= 0:
+            raise ValueError("axis_length must be positive")
+        shape = self._selected()
+        if shape is None:
+            return None
+        local_length = axis_length / max(shape.scale, 0.01)
+        axes = np.asarray(
+            (
+                (0, 0, 0),
+                (local_length, 0, 0),
+                (0, local_length, 0),
+                (0, 0, local_length),
+            ),
+            dtype=np.float32,
+        )
+        projected = np.rint(self._project_local_points(shape, axes)).astype(int)
+        minimum_z, maximum_z = self.z_limits
+        return SpatialGuide(
+            origin=tuple(projected[0]),
+            x_axis=tuple(projected[1]),
+            y_axis=tuple(projected[2]),
+            z_axis=tuple(projected[3]),
+            z_position=shape.position[2],
+            minimum_z=minimum_z,
+            maximum_z=maximum_z,
+        )
 
     def snapshot(self) -> SpatialSnapshot:
         return SpatialSnapshot(
@@ -125,12 +176,14 @@ class SpatialScene:
         self.selected_index = None
         self._move = None
 
-    def add_extrusion(
+    def add_plane(
         self,
         contour: np.ndarray,
         color: Color,
-        depth: float | None = None,
+        z_position: float = 0.0,
     ) -> bool:
+        """Add a simplified filled contour as a flat object in 3D space."""
+
         points = np.asarray(contour, dtype=np.float32).reshape(-1, 2)
         if len(points) < 3:
             return False
@@ -145,48 +198,58 @@ class SpatialScene:
         x, y, width, height = cv2.boundingRect(points)
         center = (x + (width - 1) / 2, y + (height - 1) / 2)
         local = points - np.asarray(center, dtype=np.float32)
-        extrusion_depth = (
-            float(np.clip(min(width, height) * 0.45, 18, 120))
-            if depth is None
-            else float(depth)
-        )
-        if extrusion_depth <= 0:
-            raise ValueError("depth must be positive")
-
+        z_position = self._clamp_z(float(z_position))
         self.objects.append(
-            ExtrudedShape(
+            SpatialShape(
                 contour=local,
                 color=color,
-                position=center,
-                depth=extrusion_depth,
+                position=(center[0], center[1], z_position),
             )
         )
         self.selected_index = len(self.objects) - 1
         self._move = None
         return True
 
-    def begin_move(self, point: tuple[int, int]) -> bool:
+    def begin_move(
+        self,
+        point: tuple[int, int],
+        depth_signal: float = 0.0,
+    ) -> bool:
         self.end_move()
-        for index in range(len(self.objects) - 1, -1, -1):
+        indices = sorted(
+            range(len(self.objects)),
+            key=lambda index: self.objects[index].position[2],
+            reverse=True,
+        )
+        for index in indices:
             if self._hit_test(self.objects[index], point):
                 self.selected_index = index
                 self._move = SpatialMove(
                     object_index=index,
                     anchor=point,
                     base_position=self.objects[index].position,
+                    start_depth_signal=(
+                        float(depth_signal) if depth_signal > 1e-6 else None
+                    ),
                 )
                 return True
         return False
 
-    def update_move(self, point: tuple[int, int]) -> bool:
+    def update_move(
+        self,
+        point: tuple[int, int],
+        depth_signal: float = 0.0,
+    ) -> bool:
         if self._move is None or self._move.transform is not None:
             return False
         shape = self.objects[self._move.object_index]
+        z_position = self._depth_from_signal(depth_signal)
         position = (
             self._move.base_position[0] + point[0] - self._move.anchor[0],
             self._move.base_position[1] + point[1] - self._move.anchor[1],
+            z_position,
         )
-        if np.allclose(position, shape.position):
+        if np.allclose(position, shape.position, atol=1e-4):
             return False
         shape.position = position
         return True
@@ -196,6 +259,8 @@ class SpatialScene:
         first: tuple[int, int],
         second: tuple[int, int],
         minimum_distance: float = 24.0,
+        first_depth_signal: float = 0.0,
+        second_depth_signal: float = 0.0,
     ) -> bool:
         if minimum_distance <= 0:
             raise ValueError("minimum_distance must be positive")
@@ -214,6 +279,10 @@ class SpatialScene:
             base_rotation_x=shape.rotation_x,
             base_rotation_y=shape.rotation_y,
             base_rotation_z=shape.rotation_z,
+            start_depth_balance=_depth_balance(
+                first_depth_signal,
+                second_depth_signal,
+            ),
         )
         return True
 
@@ -223,6 +292,8 @@ class SpatialScene:
         second: tuple[int, int],
         minimum_scale: float = 0.35,
         maximum_scale: float = 3.0,
+        first_depth_signal: float = 0.0,
+        second_depth_signal: float = 0.0,
     ) -> bool:
         if not 0 < minimum_scale <= maximum_scale:
             raise ValueError("Expected 0 < minimum_scale <= maximum_scale")
@@ -232,25 +303,38 @@ class SpatialScene:
         shape = self.objects[self._move.object_index]
         transform = self._move.transform
         distance = hypot(second[0] - first[0], second[1] - first[1])
+        scale_ratio = distance / transform.start_distance
+        if abs(scale_ratio - 1.0) < 0.035:
+            scale_ratio = 1.0
         scale = float(
             np.clip(
-                transform.base_scale * distance / transform.start_distance,
+                transform.base_scale * scale_ratio,
                 minimum_scale,
                 maximum_scale,
             )
         )
         angle = atan2(second[1] - first[1], second[0] - first[0])
-        rotation_z = _normalize_angle(
-            transform.base_rotation_z + degrees(angle - transform.start_angle)
-        )
+        spin_delta = _normalize_angle(degrees(angle - transform.start_angle))
+        if abs(spin_delta) < 2.5:
+            spin_delta = 0.0
+        rotation_z = _normalize_angle(transform.base_rotation_z + spin_delta)
         midpoint = ((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)
-        rotation_x = _normalize_angle(
-            transform.base_rotation_x
-            + (midpoint[1] - transform.start_midpoint[1]) * 0.65
+        midpoint_dx = _dead_zone(midpoint[0] - transform.start_midpoint[0], 5.0)
+        midpoint_dy = _dead_zone(midpoint[1] - transform.start_midpoint[1], 5.0)
+        depth_tilt = 0.0
+        current_balance = _depth_balance(first_depth_signal, second_depth_signal)
+        if transform.start_depth_balance is not None and current_balance is not None:
+            depth_tilt = (current_balance - transform.start_depth_balance) * 120.0
+
+        rotation_x = float(
+            np.clip(transform.base_rotation_x + midpoint_dy * 0.9, -78.0, 78.0)
         )
-        rotation_y = _normalize_angle(
-            transform.base_rotation_y
-            + (midpoint[0] - transform.start_midpoint[0]) * 0.65
+        rotation_y = float(
+            np.clip(
+                transform.base_rotation_y + midpoint_dx * 0.65 + depth_tilt,
+                -78.0,
+                78.0,
+            )
         )
         unchanged = (
             abs(scale - shape.scale) < 1e-4
@@ -266,7 +350,11 @@ class SpatialScene:
         shape.rotation_z = rotation_z
         return True
 
-    def end_transform(self, remaining_anchor: tuple[int, int] | None = None) -> bool:
+    def end_transform(
+        self,
+        remaining_anchor: tuple[int, int] | None = None,
+        remaining_depth_signal: float = 0.0,
+    ) -> bool:
         if self._move is None or self._move.transform is None:
             return False
         self._move.transform = None
@@ -274,6 +362,9 @@ class SpatialScene:
             shape = self.objects[self._move.object_index]
             self._move.anchor = remaining_anchor
             self._move.base_position = shape.position
+            self._move.start_depth_signal = (
+                remaining_depth_signal if remaining_depth_signal > 1e-6 else None
+            )
         return True
 
     def mark_history_recorded(self) -> None:
@@ -287,91 +378,110 @@ class SpatialScene:
         self._move = None
         return changed
 
-    def adjust_depth(self, change: float) -> bool:
+    def adjust_z(self, change: float) -> bool:
         shape = self._selected()
         if shape is None:
             return False
-        depth = float(np.clip(shape.depth + change, 8, 240))
-        if abs(depth - shape.depth) < 1e-6:
+        x, y, current_z = shape.position
+        z_position = self._clamp_z(current_z + change)
+        if abs(z_position - current_z) < 1e-6:
             return False
-        shape.depth = depth
+        shape.position = x, y, z_position
         return True
 
     def render(self, frame: np.ndarray) -> None:
         if frame.shape[:2] != (self.height, self.width):
             raise ValueError("Frame and scene dimensions do not match")
-        for shape in self.objects:
+        ordered = sorted(self.objects, key=lambda shape: shape.position[2])
+        for shape in ordered:
             self._render_shape(frame, shape)
 
-    def _selected(self) -> ExtrudedShape | None:
+    def _selected(self) -> SpatialShape | None:
         if self.selected_index is None or self.selected_index >= len(self.objects):
             return None
         return self.objects[self.selected_index]
 
-    def _hit_test(self, shape: ExtrudedShape, point: tuple[int, int]) -> bool:
-        projected, faces = self._project(shape)
-        for indices, _, _ in faces:
-            polygon = projected[indices].astype(np.float32)
-            if cv2.pointPolygonTest(polygon, point, False) >= 0:
-                return True
-        return False
+    def _hit_test(self, shape: SpatialShape, point: tuple[int, int]) -> bool:
+        projected, _ = self._project(shape)
+        return cv2.pointPolygonTest(projected, point, False) >= 0
 
-    def _render_shape(self, frame: np.ndarray, shape: ExtrudedShape) -> None:
-        projected, faces = self._project(shape)
-        faces = sorted(faces, key=lambda face: face[1], reverse=True)
-        for indices, _, shade in faces:
-            polygon = np.rint(projected[indices]).astype(np.int32)
-            cv2.fillPoly(frame, [polygon], _shade(shape.color, shade), cv2.LINE_AA)
-            cv2.polylines(frame, [polygon], True, _shade(shape.color, 0.35), 1, cv2.LINE_AA)
+    def _render_shape(self, frame: np.ndarray, shape: SpatialShape) -> None:
+        projected, normal_z = self._project(shape)
+        polygon = np.rint(projected).astype(np.int32)
+        face_shade = 0.62 + 0.38 * abs(normal_z)
+        cv2.fillPoly(frame, [polygon], _shade(shape.color, face_shade), cv2.LINE_AA)
+        cv2.polylines(
+            frame,
+            [polygon],
+            True,
+            _shade(shape.color, 0.35),
+            2,
+            cv2.LINE_AA,
+        )
 
-    def _project(
-        self,
-        shape: ExtrudedShape,
-    ) -> tuple[np.ndarray, list[tuple[np.ndarray, float, float]]]:
+    def _project(self, shape: SpatialShape) -> tuple[np.ndarray, float]:
         count = len(shape.contour)
-        front = np.column_stack(
-            (shape.contour, np.full(count, -shape.depth / 2, dtype=np.float32))
+        vertices = np.column_stack(
+            (shape.contour, np.zeros(count, dtype=np.float32))
         )
-        back = np.column_stack(
-            (shape.contour, np.full(count, shape.depth / 2, dtype=np.float32))
-        )
-        vertices = np.vstack((front, back)) * shape.scale
-        rotated = vertices @ _rotation_matrix(
+        rotation = _rotation_matrix(
             shape.rotation_x,
             shape.rotation_y,
             shape.rotation_z,
-        ).T
+        )
+        projected = self._project_local_points(shape, vertices, rotation)
+        normal_z = float((rotation @ np.asarray((0, 0, 1), dtype=np.float32))[2])
+        return projected, normal_z
 
-        focal_length = max(self.width, self.height) * 1.8
-        perspective = focal_length / np.maximum(focal_length + rotated[:, 2], 1.0)
+    def _project_local_points(
+        self,
+        shape: SpatialShape,
+        points: np.ndarray,
+        rotation: np.ndarray | None = None,
+    ) -> np.ndarray:
+        if rotation is None:
+            rotation = _rotation_matrix(
+                shape.rotation_x,
+                shape.rotation_y,
+                shape.rotation_z,
+            )
+        rotated = (np.asarray(points, dtype=np.float32) * shape.scale) @ rotation.T
+        camera_z = shape.position[2] + rotated[:, 2]
+        camera_distance = np.maximum(
+            self.focal_length - camera_z,
+            self.focal_length * 0.08,
+        )
+        perspective = np.clip(
+            self.focal_length / camera_distance,
+            0.15,
+            4.0,
+        )
         projected = np.column_stack(
             (
                 shape.position[0] + rotated[:, 0] * perspective,
                 shape.position[1] + rotated[:, 1] * perspective,
             )
         ).astype(np.float32)
+        return projected
 
-        faces: list[tuple[np.ndarray, float, float]] = [
-            (
-                np.arange(count, dtype=np.int32),
-                float(rotated[:count, 2].mean()),
-                1.0,
-            ),
-            (
-                np.arange(count, count * 2, dtype=np.int32)[::-1],
-                float(rotated[count:, 2].mean()),
-                0.55,
-            ),
-        ]
-        for index in range(count):
-            following = (index + 1) % count
-            indices = np.asarray(
-                [index, following, following + count, index + count],
-                dtype=np.int32,
-            )
-            shade = 0.58 + 0.09 * (index % 3)
-            faces.append((indices, float(rotated[indices, 2].mean()), shade))
-        return projected, faces
+    def _depth_from_signal(self, depth_signal: float) -> float:
+        if (
+            self._move is None
+            or self._move.start_depth_signal is None
+            or depth_signal <= 1e-6
+        ):
+            return self._move.base_position[2] if self._move is not None else 0.0
+        ratio_log = log(depth_signal / self._move.start_depth_signal)
+        if abs(ratio_log) <= self.depth_dead_zone:
+            ratio_log = 0.0
+        else:
+            ratio_log -= np.sign(ratio_log) * self.depth_dead_zone
+        delta = ratio_log * self.focal_length * self.depth_sensitivity
+        return self._clamp_z(self._move.base_position[2] + delta)
+
+    def _clamp_z(self, value: float) -> float:
+        minimum_z, maximum_z = self.z_limits
+        return float(np.clip(value, minimum_z, maximum_z))
 
 
 def _rotation_matrix(x_degrees: float, y_degrees: float, z_degrees: float) -> np.ndarray:
@@ -384,6 +494,18 @@ def _rotation_matrix(x_degrees: float, y_degrees: float, z_degrees: float) -> np
 
 def _normalize_angle(angle: float) -> float:
     return (angle + 180.0) % 360.0 - 180.0
+
+
+def _dead_zone(value: float, threshold: float) -> float:
+    if abs(value) <= threshold:
+        return 0.0
+    return value - np.sign(value) * threshold
+
+
+def _depth_balance(first: float, second: float) -> float | None:
+    if first <= 1e-6 or second <= 1e-6:
+        return None
+    return log(first / second)
 
 
 def _shade(color: Color, factor: float) -> Color:

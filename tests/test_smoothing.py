@@ -1,6 +1,6 @@
 import pytest
 
-from gesture_canvas.smoothing import AdaptiveSmoother, ExponentialSmoother
+from gesture_canvas.smoothing import AdaptiveSmoother, ExponentialSmoother, ScalarSmoother
 
 
 def test_smoothing_reduces_a_large_jump():
@@ -39,3 +39,18 @@ def test_adaptive_smoother_validation():
         AdaptiveSmoother(min_alpha=0.8, max_alpha=0.2)
     with pytest.raises(ValueError):
         AdaptiveSmoother(response_distance=0)
+
+
+def test_scalar_smoother_reduces_depth_jitter_and_resets():
+    smoother = ScalarSmoother(alpha=0.25)
+    assert smoother.update(0.2) == 0.2
+    assert smoother.update(0.24) == pytest.approx(0.21)
+    smoother.reset()
+    assert smoother.update(0.3) == 0.3
+
+
+def test_scalar_smoother_validation():
+    with pytest.raises(ValueError):
+        ScalarSmoother(alpha=0)
+    with pytest.raises(ValueError):
+        ScalarSmoother().update(-1)

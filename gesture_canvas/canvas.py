@@ -9,7 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .spatial import SpatialScene, SpatialSnapshot
+from .spatial import SpatialGuide, SpatialScene, SpatialSnapshot
 
 
 @dataclass(slots=True)
@@ -120,8 +120,12 @@ class DrawingCanvas:
         return self._move is None and self.spatial.selected_index is not None
 
     @property
-    def selected_spatial_depth(self) -> float | None:
-        return self.spatial.selected_depth
+    def selected_spatial_z(self) -> float | None:
+        return self.spatial.selected_z
+
+    @property
+    def spatial_guide(self) -> SpatialGuide | None:
+        return self.spatial.selected_guide()
 
     def begin_stroke(self, point: tuple[int, int]) -> None:
         self.end_move()
@@ -177,14 +181,19 @@ class DrawingCanvas:
         self._last_point = None
         self._paint_stroke = None
 
-    def begin_move(self, point: tuple[int, int], selection_radius: int = 18) -> bool:
+    def begin_move(
+        self,
+        point: tuple[int, int],
+        selection_radius: int = 18,
+        depth_signal: float = 0.0,
+    ) -> bool:
         """Select the connected painted component at or near ``point``."""
 
         if selection_radius < 0:
             raise ValueError("selection_radius cannot be negative")
         self.end_stroke()
         self.end_move()
-        if self.spatial.begin_move(point):
+        if self.spatial.begin_move(point, depth_signal):
             return True
         binary = (self.mask > 0).astype(np.uint8)
         if not np.any(binary):
@@ -222,12 +231,16 @@ class DrawingCanvas:
         self._render_move()
         return True
 
-    def update_move(self, point: tuple[int, int]) -> bool:
+    def update_move(
+        self,
+        point: tuple[int, int],
+        depth_signal: float = 0.0,
+    ) -> bool:
         """Move the selected component relative to its initial grab point."""
 
         if self.spatial.is_moving:
             before = None if self.spatial.history_recorded else self._snapshot()
-            changed = self.spatial.update_move(point)
+            changed = self.spatial.update_move(point, depth_signal)
             if changed and before is not None:
                 self._record_undo(before)
                 self.spatial.mark_history_recorded()
@@ -250,13 +263,21 @@ class DrawingCanvas:
         first: tuple[int, int],
         second: tuple[int, int],
         minimum_distance: float = 24.0,
+        first_depth_signal: float = 0.0,
+        second_depth_signal: float = 0.0,
     ) -> bool:
         """Start a two-point scale and rotation gesture for the selected component."""
 
         if minimum_distance <= 0:
             raise ValueError("minimum_distance must be positive")
         if self.spatial.is_moving:
-            return self.spatial.begin_transform(first, second, minimum_distance)
+            return self.spatial.begin_transform(
+                first,
+                second,
+                minimum_distance,
+                first_depth_signal,
+                second_depth_signal,
+            )
         if self._move is None:
             return False
         distance = hypot(second[0] - first[0], second[1] - first[1])
@@ -280,6 +301,8 @@ class DrawingCanvas:
         second: tuple[int, int],
         minimum_scale: float = 0.35,
         maximum_scale: float = 3.0,
+        first_depth_signal: float = 0.0,
+        second_depth_signal: float = 0.0,
     ) -> bool:
         """Update translation, scale, and rotation from two active pinch points."""
 
@@ -292,6 +315,8 @@ class DrawingCanvas:
                 second,
                 minimum_scale,
                 maximum_scale,
+                first_depth_signal,
+                second_depth_signal,
             )
             if changed and before is not None:
                 self._record_undo(before)
@@ -330,11 +355,18 @@ class DrawingCanvas:
         self._render_move()
         return True
 
-    def end_transform(self, remaining_anchor: tuple[int, int] | None = None) -> bool:
+    def end_transform(
+        self,
+        remaining_anchor: tuple[int, int] | None = None,
+        remaining_depth_signal: float = 0.0,
+    ) -> bool:
         """Leave two-hand mode while optionally continuing with one-hand movement."""
 
         if self.spatial.is_transforming:
-            return self.spatial.end_transform(remaining_anchor)
+            return self.spatial.end_transform(
+                remaining_anchor,
+                remaining_depth_signal,
+            )
         if self._move is None or self._move.transform is None:
             return False
         self._move.transform = None
@@ -364,8 +396,12 @@ class DrawingCanvas:
         self.mask.fill(0)
         self.spatial.clear()
 
-    def extrude_at(self, point: tuple[int, int], selection_radius: int = 18) -> bool:
-        """Replace a closed painted component near ``point`` with a 3D extrusion."""
+    def promote_to_3d(
+        self,
+        point: tuple[int, int],
+        selection_radius: int = 18,
+    ) -> bool:
+        """Move a closed painted component into the perspective 3D workspace."""
 
         if selection_radius < 0:
             raise ValueError("selection_radius cannot be negative")
@@ -402,20 +438,20 @@ class DrawingCanvas:
         pixels = self.strokes[component]
         color = tuple(int(value) for value in np.median(pixels, axis=0))
         original = self._snapshot()
-        if not self.spatial.add_extrusion(contour, color):
+        if not self.spatial.add_plane(contour, color):
             return False
         self._record_undo(original)
         self.strokes[component] = 0
         self.mask[component] = 0
         return True
 
-    def adjust_extrusion_depth(self, change: float) -> bool:
-        """Adjust the selected 3D object's depth as one undoable operation."""
+    def adjust_spatial_z(self, change: float) -> bool:
+        """Move the selected object along Z as one undoable operation."""
 
         self.end_stroke()
         self.end_move()
         original = self._snapshot()
-        if not self.spatial.adjust_depth(change):
+        if not self.spatial.adjust_z(change):
             return False
         self._record_undo(original)
         return True

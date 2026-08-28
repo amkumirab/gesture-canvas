@@ -247,7 +247,7 @@ def test_closed_eraser_motion_does_not_create_a_fill():
     assert not np.any(canvas.mask)
 
 
-def test_filled_shape_can_be_extruded_and_undone():
+def test_filled_shape_can_be_promoted_to_3d_and_undone():
     canvas = DrawingCanvas(160, 140)
     draw_polygon(
         canvas,
@@ -255,7 +255,7 @@ def test_filled_shape_can_be_extruded_and_undone():
     )
     painted = canvas.mask.copy()
 
-    assert canvas.extrude_at((80, 70))
+    assert canvas.promote_to_3d((80, 70))
     assert canvas.spatial_object_count == 1
     assert not np.any(canvas.mask)
     rendered = canvas.composite(np.zeros((140, 160, 3), dtype=np.uint8))
@@ -268,40 +268,40 @@ def test_filled_shape_can_be_extruded_and_undone():
     assert canvas.spatial_object_count == 1
 
 
-def test_open_shape_cannot_be_extruded():
+def test_open_shape_cannot_be_promoted_to_3d():
     canvas = DrawingCanvas(160, 140)
     draw_polygon(canvas, [(35, 35), (125, 35), (125, 105), (80, 105)])
 
-    assert not canvas.extrude_at((125, 70), selection_radius=10)
+    assert not canvas.promote_to_3d((125, 70), selection_radius=10)
     assert canvas.spatial_object_count == 0
 
 
-def test_extrusion_depth_change_uses_canvas_history():
+def test_spatial_z_change_uses_canvas_history():
     canvas = DrawingCanvas(160, 140)
     draw_polygon(
         canvas,
         [(35, 35), (125, 35), (125, 105), (35, 105), (35, 35), (36, 35)],
     )
-    assert canvas.extrude_at((80, 70))
-    original_depth = canvas.selected_spatial_depth
+    assert canvas.promote_to_3d((80, 70))
+    original_z = canvas.selected_spatial_z
 
-    assert canvas.adjust_extrusion_depth(20)
-    assert canvas.selected_spatial_depth == original_depth + 20
+    assert canvas.adjust_spatial_z(20)
+    assert canvas.selected_spatial_z == original_z + 20
     assert canvas.undo()
-    assert canvas.selected_spatial_depth == original_depth
+    assert canvas.selected_spatial_z == original_z
 
 
-def test_extruded_shape_movement_is_undoable():
+def test_spatial_shape_xyz_movement_is_undoable():
     canvas = DrawingCanvas(180, 160)
     draw_polygon(
         canvas,
         [(40, 40), (140, 40), (140, 120), (40, 120), (40, 40), (41, 40)],
     )
-    assert canvas.extrude_at((90, 80))
+    assert canvas.promote_to_3d((90, 80))
     original_position = canvas.spatial.objects[0].position
 
-    assert canvas.begin_move((90, 80))
-    assert canvas.update_move((115, 95))
+    assert canvas.begin_move((90, 80), depth_signal=0.2)
+    assert canvas.update_move((115, 95), depth_signal=0.3)
     assert canvas.end_move()
     assert canvas.spatial.objects[0].position != original_position
 

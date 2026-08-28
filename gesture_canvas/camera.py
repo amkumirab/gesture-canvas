@@ -70,9 +70,9 @@ class HandTracker:
             base_options=python.BaseOptions(model_asset_path=str(asset)),
             running_mode=vision.RunningMode.VIDEO,
             num_hands=2,
-            min_hand_detection_confidence=0.65,
-            min_hand_presence_confidence=0.6,
-            min_tracking_confidence=0.6,
+            min_hand_detection_confidence=0.58,
+            min_hand_presence_confidence=0.52,
+            min_tracking_confidence=0.52,
         )
         self._landmarker = vision.HandLandmarker.create_from_options(options)
         self._mp = mp
@@ -124,6 +124,8 @@ def open_camera(index: int, width: int = 1280, height: int = 720):
         )
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    camera.set(cv2.CAP_PROP_FPS, 30)
+    camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return camera
 
 

@@ -20,9 +20,11 @@ from .gestures import (
     PinchDetector,
 )
 from .help_overlay import draw_help_overlay
+from .interaction_hud import draw_manipulation_hud
 from .interaction import GrabCoordinator, PinchHand
-from .landmarks import to_pixel
-from .smoothing import AdaptiveSmoother
+from .landmarks import palm_span, pinch_point, to_pixel
+from .smoothing import AdaptiveSmoother, ScalarSmoother
+from .spatial_guides import draw_spatial_guides
 from .toolbar import DwellSelector, Toolbar, ToolButton
 
 
@@ -44,6 +46,7 @@ class HandFrame:
     pinch_started: bool
     pinch_ended: bool
     handedness: str
+    depth_signal: float
 
 
 def parse_args() -> argparse.Namespace:
@@ -104,8 +107,11 @@ def main() -> None:
         raise
 
     pinch_detectors: dict[str, PinchDetector] = {}
-    smoothers: dict[str, AdaptiveSmoother] = {}
+    draw_smoothers: dict[str, AdaptiveSmoother] = {}
+    pinch_smoothers: dict[str, AdaptiveSmoother] = {}
+    depth_smoothers: dict[str, ScalarSmoother] = {}
     draw_stabilizers: dict[str, DrawGestureStabilizer] = {}
+    missing_hand_frames: dict[str, int] = {}
     grab_coordinator = GrabCoordinator(selection_radius=32)
 
     canvas: DrawingCanvas | None = None
@@ -117,17 +123,23 @@ def main() -> None:
     drawing_hand_id: str | None = None
     hover_key: str | None = None
     hover_progress = 0.0
-    status = "Draw a closed shape, point at it, then press E to extrude"
+    status = "Press E over a closed shape, then pinch and move your hand in 3D"
     status_until = time.monotonic() + 5
     draw_blocked_until = 0.0
     previous_time = time.monotonic()
     fps = 0.0
+    failed_camera_reads = 0
 
     try:
         while True:
             ok, frame = camera.read()
             if not ok:
+                failed_camera_reads += 1
+                if failed_camera_reads <= 8:
+                    time.sleep(0.02)
+                    continue
                 raise RuntimeError("The webcam stopped returning frames")
+            failed_camera_reads = 0
             if args.mirror:
                 frame = cv2.flip(frame, 1)
 
@@ -146,8 +158,18 @@ def main() -> None:
             for index, detected_hand in enumerate(detected):
                 key = hand_key(detected_hand, index, used_keys)
                 seen_keys.add(key)
+                missing_hand_frames.pop(key, None)
                 pinch_detector = pinch_detectors.setdefault(key, PinchDetector())
-                smoother = smoothers.setdefault(key, AdaptiveSmoother())
+                draw_smoother = draw_smoothers.setdefault(key, AdaptiveSmoother())
+                pinch_smoother = pinch_smoothers.setdefault(
+                    key,
+                    AdaptiveSmoother(
+                        min_alpha=0.30,
+                        max_alpha=0.82,
+                        response_distance=55.0,
+                    ),
+                )
+                depth_smoother = depth_smoothers.setdefault(key, ScalarSmoother())
                 stabilizer = draw_stabilizers.setdefault(key, DrawGestureStabilizer())
                 raw_gesture, confidence = recognizer.recognize(
                     detected_hand.landmarks
@@ -160,8 +182,15 @@ def main() -> None:
                     gesture = Gesture.PINCH
                 if pinch_ended:
                     draw_blocked_until = interaction_time + 0.22
-                cursor = smoother.update(
+                draw_cursor = draw_smoother.update(
                     to_pixel(detected_hand.landmarks[8], width, height)
+                )
+                pinch_cursor = pinch_smoother.update(
+                    to_pixel(pinch_point(detected_hand.landmarks), width, height)
+                )
+                cursor = pinch_cursor if pinching else draw_cursor
+                depth_signal = depth_smoother.update(
+                    palm_span(detected_hand.landmarks)
                 )
                 hands.append(
                     HandFrame(
@@ -173,15 +202,21 @@ def main() -> None:
                         pinch_started=pinch_started,
                         pinch_ended=pinch_ended,
                         handedness=detected_hand.handedness,
+                        depth_signal=depth_signal,
                     )
                 )
 
             for key, detector in pinch_detectors.items():
                 if key not in seen_keys:
-                    if detector.active:
-                        draw_blocked_until = interaction_time + 0.22
-                    detector.reset()
-                    smoothers[key].reset()
+                    missing = missing_hand_frames.get(key, 0) + 1
+                    missing_hand_frames[key] = missing
+                    if missing > grab_coordinator.missing_grace_frames:
+                        if detector.active:
+                            draw_blocked_until = interaction_time + 0.22
+                        detector.reset()
+                        draw_smoothers[key].reset()
+                        pinch_smoothers[key].reset()
+                        depth_smoothers[key].reset()
 
             pinch_hands = [
                 PinchHand(
@@ -189,6 +224,7 @@ def main() -> None:
                     cursor=hand.cursor,
                     pinching=hand.pinching,
                     started=hand.pinch_started,
+                    depth_signal=hand.depth_signal,
                 )
                 for hand in hands
             ]
@@ -259,7 +295,7 @@ def main() -> None:
                                     active_hand.cursor,
                                     COLORS[active_tool],
                                     brush_size,
-                                    max_segment_length=90,
+                                    max_segment_length=150,
                                 )
                         elif two_finger_erase:
                             canvas.erase_point(
@@ -291,12 +327,12 @@ def main() -> None:
                     scale, rotation_x, rotation_y, rotation_z = (
                         canvas.spatial_transform_info
                     )
-                    depth = canvas.selected_spatial_depth or 0
+                    z_position = canvas.selected_spatial_z or 0
                     cv2.putText(
                         display,
                         (
                             f"3D {scale:.2f}x  tilt {rotation_x:+.0f}/"
-                            f"{rotation_y:+.0f}  spin {rotation_z:+.0f}  depth {depth:.0f}"
+                            f"{rotation_y:+.0f}  spin {rotation_z:+.0f}  z {z_position:+.0f}"
                         ),
                         (max(8, x), max(toolbar.height + 24, y - 12)),
                         cv2.FONT_HERSHEY_SIMPLEX,
@@ -317,6 +353,25 @@ def main() -> None:
                         2,
                         cv2.LINE_AA,
                     )
+
+            if canvas.selected_is_spatial:
+                draw_spatial_guides(display, canvas.spatial_guide, toolbar.height)
+
+            if canvas.is_transforming:
+                manipulation_mode = "transform"
+            elif canvas.is_moving:
+                manipulation_mode = (
+                    "move-3d" if canvas.selected_is_spatial else "move"
+                )
+            else:
+                manipulation_mode = "idle"
+            draw_manipulation_hud(
+                display,
+                manipulation_mode,
+                canvas.spatial_transform_info if canvas.selected_is_spatial else None,
+                grab_coordinator.recovering_tracking,
+                toolbar.height,
+            )
 
             hands_by_key = {hand.key: hand for hand in hands}
             if canvas.is_transforming and len(grab_coordinator.hand_ids) >= 2:
@@ -425,20 +480,20 @@ def main() -> None:
                     status = "Show a hand and point at a closed shape first"
                 else:
                     grab_coordinator.reset(canvas)
-                    if canvas.extrude_at(cursor_hand.cursor, selection_radius=32):
-                        status = "3D extrusion created; pinch it to move or rotate"
+                    if canvas.promote_to_3d(cursor_hand.cursor, selection_radius=32):
+                        status = "3D layer created; pinch and move closer or farther"
                     else:
                         status = "Point inside a filled closed shape and press E"
                 status_until = time.monotonic() + 3
             elif key in (ord("-"), ord("_")):
-                if canvas.adjust_extrusion_depth(-6):
-                    status = f"3D depth: {canvas.selected_spatial_depth:.0f}"
+                if canvas.adjust_spatial_z(-45):
+                    status = f"3D Z: {canvas.selected_spatial_z:+.0f}"
                 else:
                     status = "Select or create a 3D shape first"
                 status_until = time.monotonic() + 2
             elif key in (ord("="), ord("+")):
-                if canvas.adjust_extrusion_depth(6):
-                    status = f"3D depth: {canvas.selected_spatial_depth:.0f}"
+                if canvas.adjust_spatial_z(45):
+                    status = f"3D Z: {canvas.selected_spatial_z:+.0f}"
                 else:
                     status = "Select or create a 3D shape first"
                 status_until = time.monotonic() + 2

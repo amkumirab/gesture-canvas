@@ -1,6 +1,6 @@
 # Gesture Canvas
 
-A real-time hand-tracking canvas for drawing, moving, and extruding shapes using Python, OpenCV, and MediaPipe.
+A real-time hand-tracking canvas for drawing and arranging shapes in 3D space using Python, OpenCV, and MediaPipe.
 
 The project works immediately with deterministic hand-geometry rules and processes every camera frame locally.
 
@@ -17,14 +17,17 @@ The project works immediately with deterministic hand-geometry rules and process
 - Erase with two raised fingers
 - Point-and-hold toolbar selection with visible progress feedback
 - Grab and move any connected drawing directly with a pinch-and-drag gesture
+- Stable pinch-center control with short hand-tracking dropout recovery
 - Scale and rotate a grabbed drawing by pinching it with both hands
 - Smoothly return to one-hand movement when either hand releases
 - Adaptive cursor smoothing and short dropout recovery for continuous strokes
 - Adjustable 2-30 px brush with an accurate on-screen size preview
 - Toggleable in-app controls guide
-- Convert a filled closed drawing into a shaded 3D extrusion
-- Move 3D objects with one pinch and scale, spin, or tilt them with two hands
-- Adjust extrusion depth and keep every 3D edit in undo/redo history
+- Convert a filled closed drawing into a flat layer in 3D space
+- Move layers along X/Y by dragging and along Z by moving your hand closer or farther
+- Scale, spin, or tilt 3D layers with two hands
+- Perspective sizing, front-to-back ordering, and undo/redo for every spatial edit
+- Projected XYZ orientation gizmo and a live near-to-far depth ruler
 - Undo, redo, clear, and PNG export
 - Confidence and FPS display
 - Unit tests for gesture logic, smoothing, 3D projection, and canvas history
@@ -69,10 +72,15 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Temporary eraser | Raise index and middle fingers |
 | Toolbar selection | Point with your index finger and hold over a button for 0.7 seconds |
 | Move a drawing | Pinch thumb and index over a painted shape, drag, then open to drop |
-| Scale and rotate | Keep the shape pinched, pinch with the second hand, then change hand distance and angle |
-| Create a 3D extrusion | Point inside a filled closed shape and press `E` |
-| Manipulate a 3D object | Drag with one pinch; use two pinches to scale, spin, and tilt |
-| Decrease / increase 3D depth | `-` / `+` |
+| Scale | Keep two pinches held and move the hands apart or together |
+| Spin | Turn the imaginary line between the two pinches like a steering wheel |
+| Tilt | Move both pinches together, or move one hand closer than the other |
+| Create a 3D layer | Point inside a filled closed shape and press `E` |
+| Move along X/Y | Pinch the layer and drag left, right, up, or down |
+| Move along Z | Keep pinching and move your hand closer to or farther from the camera |
+| Rotate a 3D layer | Use two pinches; the live transform panel shows scale, X/Y tilt, and Z spin |
+| Move farther / closer by keyboard | `-` / `+` |
+| XYZ and depth guides | Displayed automatically while a 3D layer is selected |
 | Save | Toolbar `SAVE` or `S` |
 | Undo / Redo | Toolbar buttons or `Z` / `Y` |
 | Clear | Toolbar `CLEAR` or `C` |
@@ -87,7 +95,8 @@ gesture_canvas/
   app.py          real-time application loop
   canvas.py       drawing, compositing, undo/redo, export
   interaction.py  one- and two-hand manipulation coordination
-  spatial.py      3D extrusion, projection, shading, and manipulation
+  spatial.py      3D position, perspective projection, rotation, and depth ordering
+  spatial_guides.py  projected XYZ gizmo and near-to-far depth ruler
   gestures.py     deterministic hand-pose rules
   landmarks.py    feature extraction and coordinate conversion
 tests/            fast unit tests that do not require a webcam
@@ -101,7 +110,7 @@ pytest
 
 ## Current scope
 
-Version `0.1.0` recognizes static hand poses and supports lightweight 3D extrusion. The 3D workspace currently creates independent extruded objects; drawing directly on a rotated object's surface is a future milestone.
+Version `0.2.0` adds dropout-resistant manipulation, separate drawing and pinch smoothing, clearer live controls, and independent flat drawings in a perspective 3D workspace. Moving a hand toward or away from the camera controls the selected layer's Z position.
 
 ## Privacy
 
