@@ -55,7 +55,13 @@ class MoveState:
 
 
 class DrawingCanvas:
-    def __init__(self, width: int, height: int, history_limit: int = 30) -> None:
+    def __init__(
+        self,
+        width: int,
+        height: int,
+        history_limit: int = 30,
+        depth_sensitivity: float = 1.35,
+    ) -> None:
         if width <= 0 or height <= 0:
             raise ValueError("Canvas dimensions must be positive")
         if history_limit < 1:
@@ -71,7 +77,7 @@ class DrawingCanvas:
         self._last_point: tuple[int, int] | None = None
         self._paint_stroke: StrokeState | None = None
         self._move: MoveState | None = None
-        self.spatial = SpatialScene(width, height)
+        self.spatial = SpatialScene(width, height, depth_sensitivity)
 
     @property
     def can_undo(self) -> bool:

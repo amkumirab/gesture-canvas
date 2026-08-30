@@ -7,6 +7,8 @@ import numpy as np
 
 
 HELP_ITEMS = (
+    ("Calibrate", "K"),
+    ("Restore defaults", "D"),
     ("Draw", "Raise index finger"),
     ("Erase", "Raise index and middle fingers"),
     ("Create 3D layer", "Point inside a closed shape, then E"),
@@ -57,7 +59,8 @@ def draw_help_overlay(frame: np.ndarray, content_top: int = 74) -> None:
         cv2.LINE_AA,
     )
 
-    line_height = 28
+    available_height = max(0, bottom - top - 54)
+    line_height = max(23, min(28, available_height // max(len(HELP_ITEMS), 1)))
     available_lines = max(0, (bottom - top - 54) // line_height)
     value_x = left + min(180, max(105, (right - left) // 3))
     font_scale = 0.5 if width >= 500 else 0.4

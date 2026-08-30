@@ -78,11 +78,18 @@ class SpatialScene:
     """Own and manipulate flat drawings in a perspective 3D workspace."""
 
     depth_dead_zone = 0.025
-    depth_sensitivity = 1.35
 
-    def __init__(self, width: int, height: int) -> None:
+    def __init__(
+        self,
+        width: int,
+        height: int,
+        depth_sensitivity: float = 1.35,
+    ) -> None:
+        if not 0.5 <= depth_sensitivity <= 2.5:
+            raise ValueError("depth_sensitivity must be between 0.5 and 2.5")
         self.width = width
         self.height = height
+        self.depth_sensitivity = depth_sensitivity
         self.objects: list[SpatialShape] = []
         self.selected_index: int | None = None
         self._move: SpatialMove | None = None

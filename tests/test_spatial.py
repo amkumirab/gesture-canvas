@@ -210,3 +210,10 @@ def test_selected_guide_requires_a_positive_axis_length():
 def test_invalid_plane_is_rejected():
     scene = SpatialScene(200, 160)
     assert not scene.add_plane(np.asarray([(10, 10), (20, 20)]), (0, 0, 0))
+
+
+def test_depth_sensitivity_is_configurable_and_validated():
+    scene = SpatialScene(200, 160, depth_sensitivity=1.1)
+    assert scene.depth_sensitivity == 1.1
+    with np.testing.assert_raises(ValueError):
+        SpatialScene(200, 160, depth_sensitivity=4)

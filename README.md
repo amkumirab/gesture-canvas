@@ -12,6 +12,8 @@ The project works immediately with deterministic hand-geometry rules and process
 
 ## Features
 
+- Guided two-step gesture calibration with live light and hand-quality feedback
+- Persistent per-user pinch, smoothing, depth, camera, and selection settings
 - Draw with one raised index finger
 - Automatically fill a completed closed shape with its stroke color
 - Erase with two raised fingers
@@ -60,7 +62,9 @@ pip install -e ".[dev]"
 gesture-canvas
 ```
 
-Allow camera access when your operating system asks for permission. If the wrong camera opens, run `gesture-canvas --camera 1`.
+Allow camera access when your operating system asks for permission. If the wrong camera opens, run `gesture-canvas --camera 1`. A successful camera override is remembered for later launches.
+
+Press `K` after launch to calibrate the app for your hand and camera. First hold thumb and index open, then follow the prompt and pinch them together. No calibration is required to start; validated defaults are always available.
 
 On the first launch, the application downloads MediaPipe's official Hand Landmarker asset (about 8 MB) and keeps it in a local cache. Later launches work without another download.
 
@@ -68,6 +72,8 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 
 | Action | Hand gesture / keyboard |
 |---|---|
+| Start or repeat calibration | `K` |
+| Restore default gesture settings | `D` |
 | Draw | Raise only the index finger |
 | Auto-fill | Complete and close a shape, then lift or bend the drawing finger |
 | Temporary eraser | Raise index and middle fingers |
@@ -96,6 +102,8 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 ```text
 gesture_canvas/
   app.py          real-time application loop
+  calibration.py  guided sampling and user-specific parameter calculation
+  settings.py     validated JSON settings and local persistence
   canvas.py       drawing, compositing, undo/redo, export
   interaction.py  one- and two-hand manipulation coordination
   spatial.py      3D position, perspective projection, rotation, and depth ordering
@@ -113,11 +121,11 @@ pytest
 
 ## Current scope
 
-Version `0.2.1` adds intent-locked and smoothed 3D rotation, active-axis feedback, safe tilt limits, rotation reset, and dropout-safe transform rebasing. Moving a hand toward or away from the camera controls the selected layer's Z position.
+Version `0.3.0` adds guided per-user calibration, live camera-quality feedback, persistent settings, and safe default restoration. Moving a hand toward or away from the camera controls the selected layer's Z position.
 
 ## Privacy
 
-All webcam processing happens locally. No frame is uploaded to a server.
+All webcam processing happens locally. No frame is uploaded to a server. Calibration stores only numeric settings, never camera frames. On Windows, settings are saved under `%LOCALAPPDATA%\gesture-canvas\settings.json`.
 
 ## License
 

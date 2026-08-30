@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import argparse
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
+from math import isfinite
 from pathlib import Path
 
 import cv2
 
 from .camera import DetectedHand, create_hand_tracker, detect_hands, open_camera
+from .calibration import CalibrationMeasurement, CalibrationSession
+from .calibration_overlay import draw_calibration_overlay
 from .canvas import DrawingCanvas
 from .controls import DEFAULT_BRUSH_SIZE, adjust_brush_size
 from .gestures import (
@@ -24,6 +27,12 @@ from .interaction_hud import draw_manipulation_hud
 from .interaction import GrabCoordinator, PinchHand
 from .landmarks import palm_span, pinch_point, to_pixel
 from .smoothing import AdaptiveSmoother, ScalarSmoother
+from .settings import (
+    GestureSettings,
+    default_settings_path,
+    load_settings,
+    save_settings,
+)
 from .spatial_guides import draw_spatial_guides
 from .toolbar import DwellSelector, Toolbar, ToolButton
 
@@ -51,8 +60,19 @@ class HandFrame:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Draw in the air using hand gestures.")
-    parser.add_argument("--camera", type=int, default=0, help="Webcam index (default: 0)")
+    parser.add_argument(
+        "--camera",
+        type=int,
+        default=None,
+        help="Webcam index (default: saved setting or 0)",
+    )
     parser.add_argument("--output", type=Path, default=Path("outputs"), help="Saved image folder")
+    parser.add_argument(
+        "--settings",
+        type=Path,
+        default=None,
+        help="Custom settings file path",
+    )
     parser.add_argument("--mirror", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 
@@ -96,10 +116,38 @@ def hand_key(hand: DetectedHand, index: int, used: set[str]) -> str:
     return key
 
 
+def open_selected_camera(
+    requested_index: int | None,
+    saved_index: int,
+):
+    """Open an explicit camera, or safely fall back from a stale saved camera."""
+
+    camera_index = saved_index if requested_index is None else requested_index
+    if camera_index < 0:
+        raise ValueError("Camera index cannot be negative")
+    try:
+        return open_camera(camera_index), camera_index
+    except RuntimeError:
+        if requested_index is not None or camera_index == 0:
+            raise
+        return open_camera(0), 0
+
+
 def main() -> None:
     args = parse_args()
-    recognizer = GestureRecognizer()
-    camera = open_camera(args.camera)
+    settings_path = args.settings or default_settings_path()
+    settings = load_settings(settings_path)
+    recognizer = GestureRecognizer(settings.pinch_close_ratio)
+    camera, camera_index = open_selected_camera(
+        args.camera,
+        settings.camera_index,
+    )
+    if camera_index != settings.camera_index:
+        settings = replace(settings, camera_index=camera_index)
+        try:
+            save_settings(settings, settings_path)
+        except OSError:
+            pass
     try:
         tracker = create_hand_tracker()
     except Exception:
@@ -112,7 +160,7 @@ def main() -> None:
     depth_smoothers: dict[str, ScalarSmoother] = {}
     draw_stabilizers: dict[str, DrawGestureStabilizer] = {}
     missing_hand_frames: dict[str, int] = {}
-    grab_coordinator = GrabCoordinator(selection_radius=32)
+    grab_coordinator = GrabCoordinator(selection_radius=settings.selection_radius(1280))
 
     canvas: DrawingCanvas | None = None
     toolbar: Toolbar | None = None
@@ -123,12 +171,32 @@ def main() -> None:
     drawing_hand_id: str | None = None
     hover_key: str | None = None
     hover_progress = 0.0
-    status = "Press E over a closed shape, then pinch and move your hand in 3D"
+    calibration: CalibrationSession | None = None
+    status = (
+        "Calibration loaded - press K to recalibrate"
+        if settings.calibrated
+        else "Press K to calibrate gestures, or start with the defaults"
+    )
     status_until = time.monotonic() + 5
     draw_blocked_until = 0.0
     previous_time = time.monotonic()
     fps = 0.0
     failed_camera_reads = 0
+
+    def apply_interaction_settings() -> None:
+        nonlocal recognizer
+        recognizer = GestureRecognizer(settings.pinch_close_ratio)
+        pinch_detectors.clear()
+        draw_smoothers.clear()
+        pinch_smoothers.clear()
+        depth_smoothers.clear()
+        draw_stabilizers.clear()
+        missing_hand_frames.clear()
+        grab_coordinator.reset(canvas)
+        frame_width = canvas.width if canvas is not None else 1280
+        grab_coordinator.selection_radius = settings.selection_radius(frame_width)
+        if canvas is not None:
+            canvas.spatial.depth_sensitivity = settings.depth_sensitivity
 
     try:
         while True:
@@ -145,13 +213,22 @@ def main() -> None:
 
             height, width = frame.shape[:2]
             if canvas is None:
-                canvas = DrawingCanvas(width, height)
+                canvas = DrawingCanvas(
+                    width,
+                    height,
+                    depth_sensitivity=settings.depth_sensitivity,
+                )
                 toolbar = Toolbar(width)
+                grab_coordinator.selection_radius = settings.selection_radius(width)
             assert toolbar is not None
 
             interaction_time = time.monotonic()
+            brightness = float(frame.mean())
             detected = detect_hands(tracker, frame)
             hands: list[HandFrame] = []
+            calibration_measurements: list[
+                tuple[float, CalibrationMeasurement]
+            ] = []
             used_keys: set[str] = set()
             seen_keys: set[str] = set()
 
@@ -159,23 +236,38 @@ def main() -> None:
                 key = hand_key(detected_hand, index, used_keys)
                 seen_keys.add(key)
                 missing_hand_frames.pop(key, None)
-                pinch_detector = pinch_detectors.setdefault(key, PinchDetector())
-                draw_smoother = draw_smoothers.setdefault(key, AdaptiveSmoother())
+                pinch_detector = pinch_detectors.setdefault(
+                    key,
+                    PinchDetector(
+                        close_ratio=settings.pinch_close_ratio,
+                        release_ratio=settings.pinch_release_ratio,
+                    ),
+                )
+                draw_smoother = draw_smoothers.setdefault(
+                    key,
+                    AdaptiveSmoother(
+                        min_alpha=settings.draw_min_alpha,
+                        max_alpha=settings.draw_max_alpha,
+                    ),
+                )
                 pinch_smoother = pinch_smoothers.setdefault(
                     key,
                     AdaptiveSmoother(
-                        min_alpha=0.30,
-                        max_alpha=0.82,
+                        min_alpha=settings.pinch_min_alpha,
+                        max_alpha=settings.pinch_max_alpha,
                         response_distance=55.0,
                     ),
                 )
-                depth_smoother = depth_smoothers.setdefault(key, ScalarSmoother())
+                depth_smoother = depth_smoothers.setdefault(
+                    key,
+                    ScalarSmoother(alpha=settings.depth_alpha),
+                )
                 stabilizer = draw_stabilizers.setdefault(key, DrawGestureStabilizer())
                 raw_gesture, confidence = recognizer.recognize(
                     detected_hand.landmarks
                 )
-                pinching, pinch_started, pinch_ended, _ = pinch_detector.update(
-                    detected_hand.landmarks
+                pinching, pinch_started, pinch_ended, ratio = (
+                    pinch_detector.update(detected_hand.landmarks)
                 )
                 gesture = stabilizer.update(raw_gesture, interaction_time)
                 if pinching:
@@ -189,9 +281,20 @@ def main() -> None:
                     to_pixel(pinch_point(detected_hand.landmarks), width, height)
                 )
                 cursor = pinch_cursor if pinching else draw_cursor
-                depth_signal = depth_smoother.update(
-                    palm_span(detected_hand.landmarks)
-                )
+                raw_palm_span = palm_span(detected_hand.landmarks)
+                depth_signal = depth_smoother.update(raw_palm_span)
+                if isfinite(ratio) and ratio > 0 and raw_palm_span > 0:
+                    index_tip = detected_hand.landmarks[8]
+                    calibration_measurements.append(
+                        (
+                            detected_hand.confidence,
+                            CalibrationMeasurement(
+                                ratio,
+                                raw_palm_span,
+                                (index_tip.x, index_tip.y),
+                            ),
+                        )
+                    )
                 hands.append(
                     HandFrame(
                         key=key,
@@ -218,6 +321,37 @@ def main() -> None:
                         pinch_smoothers[key].reset()
                         depth_smoothers[key].reset()
 
+            best_hand_confidence = max(
+                (confidence for confidence, _ in calibration_measurements),
+                default=0.0,
+            )
+            calibration_frame = calibration is not None
+            if calibration is not None:
+                measurement = (
+                    max(calibration_measurements, key=lambda item: item[0])[1]
+                    if calibration_measurements
+                    else None
+                )
+                calibrated_settings = calibration.update(
+                    measurement,
+                    interaction_time,
+                )
+                if calibrated_settings is not None:
+                    settings = calibrated_settings
+                    saved = True
+                    try:
+                        save_settings(settings, settings_path)
+                    except OSError:
+                        saved = False
+                    calibration = None
+                    apply_interaction_settings()
+                    status = (
+                        "Calibration saved"
+                        if saved
+                        else "Calibration applied; settings could not be saved"
+                    )
+                    status_until = interaction_time + 3
+
             pinch_hands = [
                 PinchHand(
                     key=hand.key,
@@ -229,19 +363,30 @@ def main() -> None:
                 for hand in hands
             ]
             was_moving = canvas.is_moving
-            grab_coordinator.update(canvas, pinch_hands, canvas_top=toolbar.height)
-            manipulation_frame = (
-                was_moving
-                or canvas.is_moving
-                or any(hand.pinching for hand in hands)
-            )
+            if calibration_frame:
+                grab_coordinator.reset(canvas)
+                manipulation_frame = False
+            else:
+                grab_coordinator.update(
+                    canvas,
+                    pinch_hands,
+                    canvas_top=toolbar.height,
+                )
+                manipulation_frame = (
+                    was_moving
+                    or canvas.is_moving
+                    or any(hand.pinching for hand in hands)
+                )
 
             hover_key = None
             hover_progress = 0.0
             display_gesture = Gesture.PINCH if manipulation_frame else Gesture.IDLE
             display_confidence = 0.0
 
-            if manipulation_frame:
+            if calibration_frame:
+                canvas.end_stroke()
+                selector.reset()
+            elif manipulation_frame:
                 canvas.end_stroke()
                 selector.reset()
             else:
@@ -450,12 +595,44 @@ def main() -> None:
                     2,
                     cv2.LINE_AA,
                 )
-            if show_help:
+            if calibration is not None:
+                draw_calibration_overlay(
+                    display,
+                    calibration,
+                    brightness,
+                    best_hand_confidence,
+                    camera_index,
+                )
+            elif show_help:
                 draw_help_overlay(display, toolbar.height)
 
             cv2.imshow("Gesture Canvas", display)
             key = cv2.waitKey(1) & 0xFF
-            if key in (ord("q"), 27):
+            if key == ord("q"):
+                break
+            if calibration is not None:
+                if key == 27:
+                    calibration = None
+                    apply_interaction_settings()
+                    status = "Calibration cancelled"
+                    status_until = time.monotonic() + 2
+                elif key in (ord("k"), ord("K")):
+                    calibration = CalibrationSession(
+                        time.monotonic(),
+                        camera_index=camera_index,
+                    )
+                elif key in (ord("d"), ord("D")):
+                    settings = GestureSettings(camera_index=camera_index)
+                    try:
+                        save_settings(settings, settings_path)
+                        status = "Default gesture settings restored"
+                    except OSError:
+                        status = "Defaults applied; settings could not be saved"
+                    calibration = None
+                    apply_interaction_settings()
+                    status_until = time.monotonic() + 3
+                continue
+            if key == 27:
                 break
             if key == ord("s"):
                 status = f"Saved: {save_canvas(canvas, args.output).name}"
@@ -479,6 +656,23 @@ def main() -> None:
                 status_until = time.monotonic() + 2
             elif key == ord("h"):
                 show_help = not show_help
+            elif key in (ord("k"), ord("K")):
+                grab_coordinator.reset(canvas)
+                canvas.end_stroke()
+                selector.reset()
+                calibration = CalibrationSession(
+                    time.monotonic(),
+                    camera_index=camera_index,
+                )
+            elif key in (ord("d"), ord("D")):
+                settings = GestureSettings(camera_index=camera_index)
+                try:
+                    save_settings(settings, settings_path)
+                    status = "Default gesture settings restored"
+                except OSError:
+                    status = "Defaults applied; settings could not be saved"
+                apply_interaction_settings()
+                status_until = time.monotonic() + 3
             elif key == ord("r"):
                 grab_coordinator.reset(canvas)
                 if canvas.reset_spatial_rotation():
@@ -494,7 +688,10 @@ def main() -> None:
                     status = "Show a hand and point at a closed shape first"
                 else:
                     grab_coordinator.reset(canvas)
-                    if canvas.promote_to_3d(cursor_hand.cursor, selection_radius=32):
+                    if canvas.promote_to_3d(
+                        cursor_hand.cursor,
+                        selection_radius=settings.selection_radius(width),
+                    ):
                         status = "3D layer created; pinch and move closer or farther"
                     else:
                         status = "Point inside a filled closed shape and press E"
