@@ -9,3 +9,4 @@ dist/
 build/
 outputs/*.png
 !outputs/.gitkeep
+*.gcanvas

@@ -20,6 +20,16 @@ class CanvasSnapshot:
 
 
 @dataclass(slots=True)
+class CanvasProjectState:
+    width: int
+    height: int
+    history_limit: int
+    current: CanvasSnapshot
+    undo: list[CanvasSnapshot]
+    redo: list[CanvasSnapshot]
+
+
+@dataclass(slots=True)
 class StrokeState:
     points: list[tuple[int, int]]
     color: tuple[int, int, int]
@@ -518,11 +528,60 @@ class DrawingCanvas:
             raise OSError(f"Could not save drawing to {path}")
         return path
 
+    def project_state(self) -> CanvasProjectState:
+        """Return a detached, editable snapshot including undo and redo history."""
+
+        self.end_stroke()
+        self.end_move()
+        return CanvasProjectState(
+            width=self.width,
+            height=self.height,
+            history_limit=self.history_limit,
+            current=self._snapshot(),
+            undo=[self._copy_snapshot(snapshot) for snapshot in self._undo],
+            redo=[self._copy_snapshot(snapshot) for snapshot in self._redo],
+        )
+
+    def restore_project_state(self, state: CanvasProjectState) -> None:
+        """Replace the canvas with a previously validated project state."""
+
+        if (state.width, state.height) != (self.width, self.height):
+            raise ValueError("Project state dimensions do not match the canvas")
+        if state.history_limit < 1:
+            raise ValueError("Project history limit must be positive")
+        self.end_stroke()
+        self.end_move()
+        self.history_limit = state.history_limit
+        self._restore(state.current)
+        self._undo = [
+            self._copy_snapshot(snapshot)
+            for snapshot in state.undo[-self.history_limit :]
+        ]
+        self._redo = [
+            self._copy_snapshot(snapshot)
+            for snapshot in state.redo[-self.history_limit :]
+        ]
+        self._stroke_active = False
+        self._last_point = None
+        self._paint_stroke = None
+        self._move = None
+
     def _snapshot(self) -> CanvasSnapshot:
         return CanvasSnapshot(
             self.strokes.copy(),
             self.mask.copy(),
             self.spatial.snapshot(),
+        )
+
+    @staticmethod
+    def _copy_snapshot(snapshot: CanvasSnapshot) -> CanvasSnapshot:
+        return CanvasSnapshot(
+            snapshot.strokes.copy(),
+            snapshot.mask.copy(),
+            SpatialSnapshot(
+                objects=[shape.copy() for shape in snapshot.spatial.objects],
+                selected_index=snapshot.spatial.selected_index,
+            ),
         )
 
     def _push_undo(self) -> None:

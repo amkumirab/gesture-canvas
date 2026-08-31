@@ -11,6 +11,8 @@ HELP_ITEMS = (
     ("Restore defaults", "D"),
     ("Draw", "Raise index finger"),
     ("Erase", "Raise index and middle fingers"),
+    ("Save / open project", "Ctrl+S / Ctrl+O"),
+    ("Export PNG / clear", "S / C"),
     ("Create 3D layer", "Point inside a closed shape, then E"),
     ("Select tool", "Point at toolbar and hold"),
     ("Move X / Y", "Pinch a drawing and drag"),
@@ -25,7 +27,6 @@ HELP_ITEMS = (
     ("Move Z by key", "- farther    + closer"),
     ("Brush size", "[ thinner    ] thicker"),
     ("Undo / redo", "Z / Y"),
-    ("Save / clear", "S / C"),
     ("Close help", "H"),
 )
 

@@ -1,6 +1,9 @@
+import sys
+from pathlib import Path
+
 import pytest
 
-from gesture_canvas.app import open_selected_camera
+from gesture_canvas.app import open_selected_camera, parse_args
 
 
 def test_explicit_camera_is_opened_without_fallback(monkeypatch):
@@ -38,3 +41,13 @@ def test_explicit_camera_failure_is_not_hidden(monkeypatch):
         open_selected_camera(3, 0)
     with pytest.raises(ValueError):
         open_selected_camera(-1, 0)
+
+
+def test_project_can_be_selected_at_startup(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["gesture-canvas", "--project", "drawing.gcanvas"],
+    )
+
+    assert parse_args().project == Path("drawing.gcanvas")

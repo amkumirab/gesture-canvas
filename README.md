@@ -14,6 +14,8 @@ The project works immediately with deterministic hand-geometry rules and process
 
 - Guided two-step gesture calibration with live light and hand-quality feedback
 - Persistent per-user pinch, smoothing, depth, camera, and selection settings
+- Save and reopen editable `.gcanvas` projects with drawing and 3D state intact
+- Preserve undo and redo history inside project files
 - Draw with one raised index finger
 - Automatically fill a completed closed shape with its stroke color
 - Erase with two raised fingers
@@ -53,6 +55,12 @@ pip install -e ".[dev]"
 gesture-canvas
 ```
 
+To open an existing editable project at launch:
+
+```bash
+gesture-canvas --project path/to/drawing.gcanvas
+```
+
 On macOS or Linux:
 
 ```bash
@@ -74,6 +82,8 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 |---|---|
 | Start or repeat calibration | `K` |
 | Restore default gesture settings | `D` |
+| Save editable project | `Ctrl+S` |
+| Open editable project | `Ctrl+O` |
 | Draw | Raise only the index finger |
 | Auto-fill | Complete and close a shape, then lift or bend the drawing finger |
 | Temporary eraser | Raise index and middle fingers |
@@ -90,7 +100,7 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Rotate a 3D layer | Use two pinches; the live transform panel shows scale, X/Y tilt, and Z spin |
 | Move farther / closer by keyboard | `-` / `+` |
 | XYZ and depth guides | Displayed automatically while a 3D layer is selected |
-| Save | Toolbar `SAVE` or `S` |
+| Export PNG | Toolbar `SAVE` or `S` |
 | Undo / Redo | Toolbar buttons or `Z` / `Y` |
 | Clear | Toolbar `CLEAR` or `C` |
 | Thinner / thicker brush | `[` / `]` |
@@ -104,6 +114,7 @@ gesture_canvas/
   app.py          real-time application loop
   calibration.py  guided sampling and user-specific parameter calculation
   settings.py     validated JSON settings and local persistence
+  project_file.py versioned editable project save/load and validation
   canvas.py       drawing, compositing, undo/redo, export
   interaction.py  one- and two-hand manipulation coordination
   spatial.py      3D position, perspective projection, rotation, and depth ordering
@@ -121,7 +132,9 @@ pytest
 
 ## Current scope
 
-Version `0.3.0` adds guided per-user calibration, live camera-quality feedback, persistent settings, and safe default restoration. Moving a hand toward or away from the camera controls the selected layer's Z position.
+Version `0.4.0` adds editable project files. A `.gcanvas` file preserves the 2D canvas, 3D layers, transforms, selected layer, brush settings, and undo/redo history. Projects created at a different camera resolution are fitted to the active canvas when opened.
+
+Project saving is atomic: the existing file is replaced only after the new archive is complete. Project files contain drawing data and numeric workspace state; they never contain camera frames or executable content.
 
 ## Privacy
 

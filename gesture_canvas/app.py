@@ -26,6 +26,7 @@ from .help_overlay import draw_help_overlay
 from .interaction_hud import draw_manipulation_hud
 from .interaction import GrabCoordinator, PinchHand
 from .landmarks import palm_span, pinch_point, to_pixel
+from .project_file import ProjectFormatError, load_project, save_project
 from .smoothing import AdaptiveSmoother, ScalarSmoother
 from .settings import (
     GestureSettings,
@@ -73,6 +74,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Custom settings file path",
     )
+    parser.add_argument(
+        "--project",
+        type=Path,
+        default=None,
+        help="Editable .gcanvas project to open at startup",
+    )
     parser.add_argument("--mirror", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 
@@ -80,6 +87,43 @@ def parse_args() -> argparse.Namespace:
 def save_canvas(canvas: DrawingCanvas, output_dir: Path) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return canvas.export(output_dir / f"gesture_canvas_{stamp}.png")
+
+
+def choose_project_file(save: bool, current: Path | None = None) -> Path | None:
+    """Show the operating system project picker and return the chosen path."""
+
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        options = {
+            "title": "Save Gesture Canvas project" if save else "Open Gesture Canvas project",
+            "filetypes": (("Gesture Canvas project", "*.gcanvas"), ("All files", "*.*")),
+        }
+        if current is not None:
+            options["initialdir"] = str(current.parent)
+            options["initialfile"] = current.name
+        elif save:
+            options["initialfile"] = (
+                f"gesture_canvas_{datetime.now():%Y%m%d_%H%M%S}.gcanvas"
+            )
+        try:
+            selected = (
+                filedialog.asksaveasfilename(
+                    **options,
+                    defaultextension=".gcanvas",
+                )
+                if save
+                else filedialog.askopenfilename(**options)
+            )
+        finally:
+            root.destroy()
+    except Exception as error:
+        raise OSError("The project file picker could not be opened") from error
+    return Path(selected) if selected else None
 
 
 def apply_button(
@@ -172,6 +216,8 @@ def main() -> None:
     hover_key: str | None = None
     hover_progress = 0.0
     calibration: CalibrationSession | None = None
+    current_project: Path | None = None
+    pending_project = args.project
     status = (
         "Calibration loaded - press K to recalibrate"
         if settings.calibrated
@@ -220,6 +266,21 @@ def main() -> None:
                 )
                 toolbar = Toolbar(width)
                 grab_coordinator.selection_radius = settings.selection_radius(width)
+                if pending_project is not None:
+                    try:
+                        opened = load_project(
+                            pending_project,
+                            target_size=(canvas.width, canvas.height),
+                        )
+                        canvas.restore_project_state(opened.canvas)
+                        brush_size = opened.brush_size
+                        active_tool = opened.active_tool
+                        current_project = pending_project.resolve()
+                        status = f"Project opened: {pending_project.name}"
+                    except ProjectFormatError as error:
+                        status = f"Could not open project: {error}"
+                    status_until = time.monotonic() + 4
+                    pending_project = None
             assert toolbar is not None
 
             interaction_time = time.monotonic()
@@ -634,7 +695,50 @@ def main() -> None:
                 continue
             if key == 27:
                 break
-            if key == ord("s"):
+            if key == 19:  # Ctrl+S
+                grab_coordinator.reset(canvas)
+                selector.reset()
+                try:
+                    selected = current_project or choose_project_file(True)
+                    if selected is None:
+                        status = "Project save cancelled"
+                    else:
+                        saved_project = save_project(
+                            selected,
+                            canvas.project_state(),
+                            brush_size,
+                            active_tool,
+                        )
+                        current_project = saved_project.resolve()
+                        status = f"Project saved: {current_project.name}"
+                except (OSError, ValueError) as error:
+                    status = f"Could not save project: {error}"
+                drawing_hand_id = None
+                apply_interaction_settings()
+                status_until = time.monotonic() + 3
+            elif key == 15:  # Ctrl+O
+                grab_coordinator.reset(canvas)
+                selector.reset()
+                try:
+                    selected = choose_project_file(False, current_project)
+                    if selected is None:
+                        status = "Open project cancelled"
+                    else:
+                        opened = load_project(
+                            selected,
+                            target_size=(canvas.width, canvas.height),
+                        )
+                        canvas.restore_project_state(opened.canvas)
+                        brush_size = opened.brush_size
+                        active_tool = opened.active_tool
+                        current_project = selected.resolve()
+                        status = f"Project opened: {selected.name}"
+                        drawing_hand_id = None
+                        apply_interaction_settings()
+                except (OSError, ProjectFormatError, ValueError) as error:
+                    status = f"Could not open project: {error}"
+                status_until = time.monotonic() + 4
+            elif key == ord("s"):
                 status = f"Saved: {save_canvas(canvas, args.output).name}"
                 status_until = time.monotonic() + 2
             elif key == ord("c"):
