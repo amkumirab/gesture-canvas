@@ -569,7 +569,9 @@ def main() -> None:
                     active_control=spatial_control,
                 )
 
-            if canvas.is_transforming:
+            if grab_coordinator.arming_transform:
+                manipulation_mode = "arm-transform"
+            elif canvas.is_transforming:
                 manipulation_mode = "transform"
             elif canvas.is_moving:
                 manipulation_mode = (

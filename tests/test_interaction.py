@@ -21,6 +21,8 @@ def test_coordinator_moves_then_transforms_then_returns_to_one_hand():
     coordinator.update(canvas, [first])
     second = PinchHand("right", (150, 90), pinching=True, started=True)
     coordinator.update(canvas, [first, second])
+    assert coordinator.arming_transform
+    coordinator.update(canvas, [first, second])
     assert canvas.is_transforming
 
     second = PinchHand("right", (190, 90), pinching=True)
@@ -69,6 +71,13 @@ def test_coordinator_validation_and_reset():
     else:
         raise AssertionError("negative dropout grace should fail")
 
+    try:
+        GrabCoordinator(transform_arm_frames=0)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("transform arming must use at least one frame")
+
 
 def test_coordinator_survives_brief_hand_tracking_dropout():
     canvas = create_canvas_with_line()
@@ -95,6 +104,27 @@ def test_coordinator_ends_move_after_dropout_grace_expires():
     coordinator.update(canvas, [])
     coordinator.update(canvas, [])
     assert not canvas.is_moving
+
+
+def test_transform_does_not_arm_from_a_cached_primary_hand():
+    canvas = create_canvas_with_line()
+    coordinator = GrabCoordinator(missing_grace_frames=2)
+    first = PinchHand("left", (100, 90), pinching=True, started=True)
+    second = PinchHand("right", (150, 90), pinching=True, started=True)
+    assert coordinator.update(canvas, [first])
+    assert coordinator.update(canvas, [first, second])
+    assert coordinator.arming_transform
+
+    assert coordinator.update(canvas, [second])
+    assert coordinator.recovering_tracking
+    assert not coordinator.arming_transform
+    assert not canvas.is_transforming
+
+    recovered = PinchHand("left", (102, 90), pinching=True)
+    assert coordinator.update(canvas, [recovered, second])
+    assert coordinator.arming_transform
+    assert coordinator.update(canvas, [recovered, second])
+    assert canvas.is_transforming
 
 
 def test_coordinator_manipulates_a_spatial_shape_in_xyz():
@@ -128,6 +158,8 @@ def test_coordinator_manipulates_a_spatial_shape_in_xyz():
 
     second = PinchHand("right", (170, 90), pinching=True, started=True)
     coordinator.update(canvas, [first, second])
+    assert coordinator.arming_transform
+    coordinator.update(canvas, [first, second])
     assert canvas.spatial.is_transforming
 
     second = PinchHand("right", (190, 60), pinching=True)
@@ -156,6 +188,8 @@ def test_spatial_transform_freezes_and_rebases_during_hand_dropout():
     first = PinchHand("left", (100, 90), pinching=True, started=True)
     second = PinchHand("right", (180, 90), pinching=True, started=True)
     assert coordinator.update(canvas, [first])
+    assert coordinator.update(canvas, [first, second])
+    assert coordinator.arming_transform
     assert coordinator.update(canvas, [first, second])
     turned_second = PinchHand("right", (140, 130), pinching=True)
     coordinator.update(canvas, [first, turned_second])

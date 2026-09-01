@@ -105,6 +105,7 @@ def test_pair_vertical_motion_locks_x_tilt_only():
     assert scene.begin_move((100, 80))
     assert scene.begin_transform((60, 60), (140, 60))
 
+    assert not scene.update_transform((60, 90), (140, 90))
     assert scene.update_transform((60, 90), (140, 90))
     scale, rotation_x, rotation_y, rotation_z = scene.transform_info
     assert scene.transform_control == "tilt_x"
@@ -145,6 +146,68 @@ def test_two_hand_transform_filters_small_jitter():
     assert scene.begin_transform((70, 70), (150, 70))
 
     assert not scene.update_transform((71, 72), (151, 72))
+    assert scene.transform_control == "waiting"
+    assert scene.transform_info == (1.0, 0.0, 0.0, 0.0)
+
+
+def test_moderate_spin_requires_consistent_motion_before_locking():
+    scene = SpatialScene(240, 180)
+    scene.add_plane(square_contour(), (60, 120, 240))
+    assert scene.begin_move((100, 80))
+    assert scene.begin_transform((60, 80), (140, 80))
+
+    assert not scene.update_transform((57, 74), (143, 86))
+    assert scene.transform_control == "waiting"
+    assert scene.update_transform((57, 74), (143, 86))
+    assert scene.transform_control == "spin"
+    assert scene.transform_info[3] > 0
+
+
+def test_sustained_mixed_motion_eventually_uses_the_strongest_intent():
+    scene = SpatialScene(240, 180)
+    scene.add_plane(square_contour(), (60, 120, 240))
+    assert scene.begin_move((100, 80))
+    assert scene.begin_transform((60, 80), (140, 80))
+
+    for _ in range(7):
+        assert not scene.update_transform((53, 70), (147, 90))
+        assert scene.transform_control == "waiting"
+
+    assert scene.update_transform((53, 70), (147, 90))
+    assert scene.transform_control == "spin"
+
+
+def test_endpoint_order_swap_does_not_create_a_rotation_jump():
+    scene = SpatialScene(240, 180)
+    scene.add_plane(square_contour(), (60, 120, 240))
+    assert scene.begin_move((100, 80))
+    assert scene.begin_transform((60, 80), (140, 80))
+    for _ in range(12):
+        scene.update_transform((100, 40), (100, 120))
+    before_swap = scene.transform_info[3]
+
+    scene.update_transform((100, 120), (100, 40))
+
+    assert abs(scene.transform_info[3] - before_swap) < 1.0
+
+
+def test_endpoint_order_swap_preserves_depth_balance():
+    scene = SpatialScene(240, 180)
+    scene.add_plane(square_contour(), (60, 120, 240))
+    assert scene.begin_move((100, 80))
+    assert scene.begin_transform(
+        (60, 80),
+        (140, 80),
+        first_depth_signal=0.20,
+        second_depth_signal=0.30,
+    )
+
+    assert not scene.update_transform(
+        (140, 80),
+        (60, 80),
+        first_depth_signal=0.30,
+        second_depth_signal=0.20,
+    )
     assert scene.transform_control == "waiting"
     assert scene.transform_info == (1.0, 0.0, 0.0, 0.0)
 

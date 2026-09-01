@@ -23,17 +23,23 @@ class GrabCoordinator:
         self,
         selection_radius: int = 32,
         missing_grace_frames: int = 8,
+        transform_arm_frames: int = 2,
     ) -> None:
         if selection_radius < 0:
             raise ValueError("selection_radius cannot be negative")
         if missing_grace_frames < 0:
             raise ValueError("missing_grace_frames cannot be negative")
+        if transform_arm_frames < 1:
+            raise ValueError("transform_arm_frames must be positive")
         self.selection_radius = selection_radius
         self.missing_grace_frames = missing_grace_frames
+        self.transform_arm_frames = transform_arm_frames
         self.hand_ids: list[str] = []
         self._last_hands: dict[str, PinchHand] = {}
         self._missing_frames: dict[str, int] = {}
         self._transform_paused = False
+        self._second_candidate: str | None = None
+        self._second_candidate_frames = 0
 
     @property
     def recovering_tracking(self) -> bool:
@@ -43,6 +49,12 @@ class GrabCoordinator:
             key in self._missing_frames and self._missing_frames[key] > 0
             for key in self.hand_ids
         )
+
+    @property
+    def arming_transform(self) -> bool:
+        """Whether a stable second pinch is being confirmed."""
+
+        return self._second_candidate is not None
 
     def update(
         self,
@@ -58,6 +70,7 @@ class GrabCoordinator:
 
         if not canvas.is_moving:
             self.hand_ids.clear()
+            self._clear_transform_candidate()
             for hand in hands:
                 if (
                     hand.pinching
@@ -99,9 +112,11 @@ class GrabCoordinator:
             canvas.end_move()
             self.hand_ids.clear()
             self._transform_paused = False
+            self._clear_transform_candidate()
             return False
 
         if len(active) >= 2:
+            self._clear_transform_candidate()
             first, second = active[:2]
             self.hand_ids = [first.key, second.key]
             if self.recovering_tracking:
@@ -138,7 +153,11 @@ class GrabCoordinator:
         self._transform_paused = False
         if canvas.is_transforming:
             canvas.end_transform(primary.cursor, primary.depth_signal)
+            self._clear_transform_candidate()
         self.hand_ids = [primary.key]
+        if self.recovering_tracking:
+            self._clear_transform_candidate()
+            return True
 
         candidates = [
             hand
@@ -146,6 +165,14 @@ class GrabCoordinator:
             if hand.key != primary.key and hand.pinching
         ]
         for second in candidates:
+            if self._second_candidate == second.key:
+                self._second_candidate_frames += 1
+            else:
+                self._second_candidate = second.key
+                self._second_candidate_frames = 1
+            self._last_hands[second.key] = second
+            if self._second_candidate_frames < self.transform_arm_frames:
+                return True
             if canvas.begin_transform(
                 primary.cursor,
                 second.cursor,
@@ -154,6 +181,7 @@ class GrabCoordinator:
             ):
                 self.hand_ids.append(second.key)
                 self._last_hands[second.key] = second
+                self._clear_transform_candidate()
                 canvas.update_transform(
                     primary.cursor,
                     second.cursor,
@@ -162,6 +190,7 @@ class GrabCoordinator:
                 )
                 return True
 
+        self._clear_transform_candidate()
         canvas.update_move(primary.cursor, primary.depth_signal)
         return True
 
@@ -172,3 +201,8 @@ class GrabCoordinator:
         self._last_hands.clear()
         self._missing_frames.clear()
         self._transform_paused = False
+        self._clear_transform_candidate()
+
+    def _clear_transform_candidate(self) -> None:
+        self._second_candidate = None
+        self._second_candidate_frames = 0

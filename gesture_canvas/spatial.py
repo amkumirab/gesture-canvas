@@ -55,13 +55,18 @@ class SpatialGuide:
 class SpatialTransform:
     start_midpoint: tuple[float, float]
     start_distance: float
-    start_angle: float
     base_scale: float
     base_rotation_x: float
     base_rotation_y: float
     base_rotation_z: float
     start_depth_balance: float | None
+    previous_angle: float
+    accumulated_spin: float = 0.0
+    order_reversed: bool = False
     control: str = "waiting"
+    candidate: str = "waiting"
+    candidate_frames: int = 0
+    decision_frames: int = 0
 
 
 @dataclass(slots=True)
@@ -285,10 +290,10 @@ class SpatialScene:
             return False
         shape = self.objects[self._move.object_index]
         midpoint = ((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)
+        angle = atan2(second[1] - first[1], second[0] - first[0])
         self._move.transform = SpatialTransform(
             start_midpoint=midpoint,
             start_distance=distance,
-            start_angle=atan2(second[1] - first[1], second[0] - first[0]),
             base_scale=shape.scale,
             base_rotation_x=shape.rotation_x,
             base_rotation_y=shape.rotation_y,
@@ -297,6 +302,7 @@ class SpatialScene:
                 first_depth_signal,
                 second_depth_signal,
             ),
+            previous_angle=angle,
         )
         return True
 
@@ -319,26 +325,60 @@ class SpatialScene:
         distance = hypot(second[0] - first[0], second[1] - first[1])
         scale_ratio = distance / transform.start_distance
         angle = atan2(second[1] - first[1], second[0] - first[0])
-        spin_delta = _normalize_angle(degrees(angle - transform.start_angle))
+        angle_step, order_swapped = _stable_angle_step(
+            transform.previous_angle,
+            angle,
+        )
+        transform.previous_angle = angle
+        if order_swapped:
+            transform.order_reversed = not transform.order_reversed
+        transform.accumulated_spin += angle_step
+        spin_delta = transform.accumulated_spin
         midpoint = ((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)
         midpoint_dx = midpoint[0] - transform.start_midpoint[0]
         midpoint_dy = midpoint[1] - transform.start_midpoint[1]
         depth_delta = 0.0
         current_balance = _depth_balance(first_depth_signal, second_depth_signal)
+        if current_balance is not None and transform.order_reversed:
+            current_balance = -current_balance
         if transform.start_depth_balance is not None and current_balance is not None:
             depth_delta = current_balance - transform.start_depth_balance
 
         tilt_x_delta = midpoint_dy * 0.85
         tilt_y_delta = midpoint_dx * 0.60 + depth_delta * 115.0
         if transform.control == "waiting":
-            transform.control = _choose_transform_control(
+            transform.decision_frames += 1
+            scores = _transform_control_scores(
                 scale_ratio,
                 spin_delta,
                 tilt_x_delta,
                 tilt_y_delta,
             )
-            if transform.control == "waiting":
+            candidate = _choose_transform_control(scores)
+            if candidate == "waiting" and transform.decision_frames >= 8:
+                best_control, best_score = max(
+                    scores.items(),
+                    key=lambda item: item[1],
+                )
+                if best_score >= 1.15:
+                    candidate = best_control
+            if candidate == "waiting":
+                transform.candidate = "waiting"
+                transform.candidate_frames = 0
                 return False
+            if candidate == transform.candidate:
+                transform.candidate_frames += 1
+            else:
+                transform.candidate = candidate
+                transform.candidate_frames = 1
+            candidate_score = scores[candidate]
+            if (
+                candidate_score < 2.2
+                and transform.candidate_frames < 2
+                and transform.decision_frames < 8
+            ):
+                return False
+            transform.control = candidate
 
         scale = shape.scale
         rotation_x = shape.rotation_x
@@ -543,23 +583,41 @@ def _normalize_angle(angle: float) -> float:
     return (angle + 180.0) % 360.0 - 180.0
 
 
-def _choose_transform_control(
+def _transform_control_scores(
     scale_ratio: float,
     spin_delta: float,
     tilt_x_delta: float,
     tilt_y_delta: float,
-) -> str:
-    """Lock onto the clearest initial two-hand movement."""
+) -> dict[str, float]:
+    """Return normalized intent scores with a slight rotation preference."""
 
     safe_scale = max(scale_ratio, 1e-6)
-    scores = {
-        "scale": abs(log(safe_scale)) / 0.075,
-        "spin": abs(spin_delta) / 5.0,
-        "tilt_x": abs(tilt_x_delta) / 10.0,
-        "tilt_y": abs(tilt_y_delta) / 10.0,
+    return {
+        "scale": abs(log(safe_scale)) / 0.10,
+        "spin": abs(spin_delta) / 6.0,
+        "tilt_x": abs(tilt_x_delta) / 14.0,
+        "tilt_y": abs(tilt_y_delta) / 14.0,
     }
-    control, score = max(scores.items(), key=lambda item: item[1])
-    return control if score >= 1.0 else "waiting"
+
+
+def _choose_transform_control(scores: dict[str, float]) -> str:
+    """Choose only a clear gesture so early tracking noise cannot lock a mode."""
+
+    ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    (control, score), (_, runner_up) = ordered[:2]
+    if score < 1.0 or score < runner_up * 1.18:
+        return "waiting"
+    return control
+
+
+def _stable_angle_step(previous: float, current: float) -> tuple[float, bool]:
+    """Return a continuous angle step and absorb an endpoint-order swap."""
+
+    step = _normalize_angle(degrees(current - previous))
+    swapped = abs(step) > 100.0
+    if swapped:
+        step -= 180.0 if step > 0 else -180.0
+    return step, swapped
 
 
 def _smooth_value(current: float, target: float, alpha: float) -> float:

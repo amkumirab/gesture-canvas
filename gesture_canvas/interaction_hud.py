@@ -18,10 +18,13 @@ def draw_manipulation_hud(
 
     if mode == "idle" or frame.shape[0] < 130 or frame.shape[1] < 320:
         return
-    if mode not in {"move", "move-3d", "transform"}:
+    if mode not in {"move", "move-3d", "arm-transform", "transform"}:
         raise ValueError(f"Unknown manipulation mode: {mode}")
 
-    if mode == "transform":
+    if mode == "arm-transform":
+        title = "TWO-HAND READY"
+        hint = "HOLD BOTH PINCHES STEADY - THEN MOVE TO ROTATE"
+    elif mode == "transform":
         title = "TWO-HAND TRANSFORM"
         control_labels = {
             "scale": "SCALE",

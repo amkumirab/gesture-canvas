@@ -24,6 +24,8 @@ The project works immediately with deterministic hand-geometry rules and process
 - Stable pinch-center control with short hand-tracking dropout recovery
 - Scale and rotate a grabbed drawing by pinching it with both hands
 - Intent-locked 3D transforms that isolate scale, spin, and tilt
+- Stable two-hand transform arming with multi-frame intent confirmation
+- Continuous rotation when hand labels briefly swap during tracking
 - Smoothly return to one-hand movement when either hand releases
 - Adaptive cursor smoothing and short dropout recovery for continuous strokes
 - Adjustable 2-30 px brush with an accurate on-screen size preview
@@ -97,6 +99,7 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Create a 3D layer | Point inside a filled closed shape and press `E` |
 | Move along X/Y | Pinch the layer and drag left, right, up, or down |
 | Move along Z | Keep pinching and move your hand closer to or farther from the camera |
+| Start a two-hand transform | Hold both pinches steady until `TWO-HAND READY`, then move clearly |
 | Rotate a 3D layer | Use two pinches; the live transform panel shows scale, X/Y tilt, and Z spin |
 | Move farther / closer by keyboard | `-` / `+` |
 | XYZ and depth guides | Displayed automatically while a 3D layer is selected |
@@ -132,7 +135,9 @@ pytest
 
 ## Current scope
 
-Version `0.4.0` adds editable project files. A `.gcanvas` file preserves the 2D canvas, 3D layers, transforms, selected layer, brush settings, and undo/redo history. Projects created at a different camera resolution are fitted to the active canvas when opened.
+Version `0.4.1` improves two-hand 3D transforms. A short arming step lets both pinch cursors settle before movement is measured, intent must be clear or consistent before a control locks, and rotation remains continuous if hand labels briefly swap during tracking.
+
+A `.gcanvas` file preserves the 2D canvas, 3D layers, transforms, selected layer, brush settings, and undo/redo history. Projects created at a different camera resolution are fitted to the active canvas when opened.
 
 Project saving is atomic: the existing file is replaced only after the new archive is complete. Project files contain drawing data and numeric workspace state; they never contain camera frames or executable content.
 

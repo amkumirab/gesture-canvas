@@ -17,6 +17,7 @@ HELP_ITEMS = (
     ("Select tool", "Point at toolbar and hold"),
     ("Move X / Y", "Pinch a drawing and drag"),
     ("Move Z", "While pinching, move hand closer / farther"),
+    ("Start transform", "Hold both pinches steady, then move clearly"),
     ("Scale", "Two pinches: move hands apart / together"),
     ("Spin", "Two pinches: turn the line between hands"),
     ("Tilt X / Y", "Move both hands together or change hand depth"),

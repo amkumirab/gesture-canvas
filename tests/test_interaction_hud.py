@@ -5,7 +5,10 @@ import pytest
 from gesture_canvas.interaction_hud import draw_manipulation_hud
 
 
-@pytest.mark.parametrize("mode", ["move", "move-3d", "transform"])
+@pytest.mark.parametrize(
+    "mode",
+    ["move", "move-3d", "arm-transform", "transform"],
+)
 def test_manipulation_hud_draws_for_active_modes(mode):
     frame = np.zeros((240, 640, 3), dtype=np.uint8)
     draw_manipulation_hud(frame, mode, (1.2, 10, -15, 25))
