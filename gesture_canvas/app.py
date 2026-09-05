@@ -27,6 +27,7 @@ from .interaction_hud import draw_manipulation_hud
 from .interaction import GrabCoordinator, PinchHand
 from .landmarks import palm_span, pinch_point, to_pixel
 from .project_file import ProjectFormatError, load_project, save_project
+from .recovery import AutosaveController
 from .smoothing import AdaptiveSmoother, ScalarSmoother
 from .settings import (
     GestureSettings,
@@ -79,6 +80,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Editable .gcanvas project to open at startup",
+    )
+    parser.add_argument(
+        "--no-restore",
+        action="store_true",
+        help="Start with a blank canvas instead of restoring the previous session",
     )
     parser.add_argument("--mirror", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
@@ -177,6 +183,20 @@ def open_selected_camera(
         return open_camera(0), 0
 
 
+def startup_project_path(
+    requested_project: Path | None,
+    recovery_path: Path,
+    restore_previous: bool,
+) -> Path | None:
+    """Prefer an explicit project, otherwise return an available recovery file."""
+
+    if requested_project is not None:
+        return requested_project
+    if restore_previous and recovery_path.is_file():
+        return recovery_path
+    return None
+
+
 def main() -> None:
     args = parse_args()
     settings_path = args.settings or default_settings_path()
@@ -218,6 +238,13 @@ def main() -> None:
     calibration: CalibrationSession | None = None
     current_project: Path | None = None
     pending_project = args.project
+    recovery_path = settings_path.parent / "recovery.gcanvas"
+    pending_startup = startup_project_path(
+        pending_project,
+        recovery_path,
+        restore_previous=not args.no_restore,
+    )
+    autosave = AutosaveController(recovery_path)
     status = (
         "Calibration loaded - press K to recalibrate"
         if settings.calibrated
@@ -266,21 +293,25 @@ def main() -> None:
                 )
                 toolbar = Toolbar(width)
                 grab_coordinator.selection_radius = settings.selection_radius(width)
-                if pending_project is not None:
+                if pending_startup is not None:
                     try:
                         opened = load_project(
-                            pending_project,
+                            pending_startup,
                             target_size=(canvas.width, canvas.height),
                         )
                         canvas.restore_project_state(opened.canvas)
                         brush_size = opened.brush_size
                         active_tool = opened.active_tool
-                        current_project = pending_project.resolve()
-                        status = f"Project opened: {pending_project.name}"
+                        if pending_project is not None:
+                            current_project = pending_project.resolve()
+                            status = f"Project opened: {pending_project.name}"
+                        else:
+                            status = "Previous drawing session restored"
                     except ProjectFormatError as error:
-                        status = f"Could not open project: {error}"
+                        status = f"Could not restore startup drawing: {error}"
                     status_until = time.monotonic() + 4
                     pending_project = None
+                    pending_startup = None
             assert toolbar is not None
 
             interaction_time = time.monotonic()
@@ -814,10 +845,27 @@ def main() -> None:
                 else:
                     status = "Select or create a 3D shape first"
                 status_until = time.monotonic() + 2
+            autosave.maybe_save(
+                canvas,
+                brush_size,
+                active_tool,
+                time.monotonic(),
+            )
+            autosave_error = autosave.consume_error()
+            if autosave_error is not None:
+                status = f"Session recovery could not be updated: {autosave_error}"
+                status_until = time.monotonic() + 4
     finally:
-        tracker.close()
-        camera.release()
-        cv2.destroyAllWindows()
+        try:
+            if canvas is not None:
+                autosave.save_now(canvas, brush_size, active_tool)
+        except (OSError, ValueError):
+            pass
+        finally:
+            autosave.close()
+            tracker.close()
+            camera.release()
+            cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":

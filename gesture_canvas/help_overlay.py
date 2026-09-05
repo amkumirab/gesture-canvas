@@ -12,6 +12,7 @@ HELP_ITEMS = (
     ("Draw", "Raise index finger"),
     ("Erase", "Raise index and middle fingers"),
     ("Save / open project", "Ctrl+S / Ctrl+O"),
+    ("Session recovery", "Automatic every 8 seconds"),
     ("Export PNG / clear", "S / C"),
     ("Create 3D layer", "Point inside a closed shape, then E"),
     ("Select tool", "Point at toolbar and hold"),

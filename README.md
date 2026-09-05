@@ -16,6 +16,7 @@ The project works immediately with deterministic hand-geometry rules and process
 - Persistent per-user pinch, smoothing, depth, camera, and selection settings
 - Save and reopen editable `.gcanvas` projects with drawing and 3D state intact
 - Preserve undo and redo history inside project files
+- Recover the most recent drawing session with background autosave
 - Draw with one raised index finger
 - Automatically fill a completed closed shape with its stroke color
 - Erase with two raised fingers
@@ -63,6 +64,12 @@ To open an existing editable project at launch:
 gesture-canvas --project path/to/drawing.gcanvas
 ```
 
+The previous drawing session is restored automatically. To deliberately start with a blank canvas instead:
+
+```bash
+gesture-canvas --no-restore
+```
+
 On macOS or Linux:
 
 ```bash
@@ -86,6 +93,7 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Restore default gesture settings | `D` |
 | Save editable project | `Ctrl+S` |
 | Open editable project | `Ctrl+O` |
+| Start without restoring the previous session | Launch with `--no-restore` |
 | Draw | Raise only the index finger |
 | Auto-fill | Complete and close a shape, then lift or bend the drawing finger |
 | Temporary eraser | Raise index and middle fingers |
@@ -118,6 +126,7 @@ gesture_canvas/
   calibration.py  guided sampling and user-specific parameter calculation
   settings.py     validated JSON settings and local persistence
   project_file.py versioned editable project save/load and validation
+  recovery.py     background session autosave coordination
   canvas.py       drawing, compositing, undo/redo, export
   interaction.py  one- and two-hand manipulation coordination
   spatial.py      3D position, perspective projection, rotation, and depth ordering
@@ -135,7 +144,9 @@ pytest
 
 ## Current scope
 
-Version `0.4.1` improves two-hand 3D transforms. A short arming step lets both pinch cursors settle before movement is measured, intent must be clear or consistent before a control locks, and rotation remains continuous if hand labels briefly swap during tracking.
+Version `0.5.0` adds automatic session recovery. The current 2D drawing, 3D layers, selected tool, and brush size are saved in the background every eight seconds after a change and once more during shutdown. The latest session is restored on the next normal launch, while `--project` opens the requested project and `--no-restore` starts fresh.
+
+Background recovery intentionally stores only the current state to keep frame interruptions minimal. Manually saved `.gcanvas` projects continue to preserve the complete undo and redo history.
 
 A `.gcanvas` file preserves the 2D canvas, 3D layers, transforms, selected layer, brush settings, and undo/redo history. Projects created at a different camera resolution are fitted to the active canvas when opened.
 
@@ -143,7 +154,7 @@ Project saving is atomic: the existing file is replaced only after the new archi
 
 ## Privacy
 
-All webcam processing happens locally. No frame is uploaded to a server. Calibration stores only numeric settings, never camera frames. On Windows, settings are saved under `%LOCALAPPDATA%\gesture-canvas\settings.json`.
+All webcam processing happens locally. No frame is uploaded to a server. Calibration stores only numeric settings, never camera frames. Session recovery contains only the drawing canvas and workspace state. On Windows, settings and recovery data are saved under `%LOCALAPPDATA%\gesture-canvas`.
 
 ## License
 

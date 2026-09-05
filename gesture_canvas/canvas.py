@@ -87,6 +87,7 @@ class DrawingCanvas:
         self._last_point: tuple[int, int] | None = None
         self._paint_stroke: StrokeState | None = None
         self._move: MoveState | None = None
+        self._revision = 0
         self.spatial = SpatialScene(width, height, depth_sensitivity)
 
     @property
@@ -96,6 +97,12 @@ class DrawingCanvas:
     @property
     def can_redo(self) -> bool:
         return bool(self._redo)
+
+    @property
+    def revision(self) -> int:
+        """Monotonically increasing identifier for rendered canvas changes."""
+
+        return self._revision
 
     @property
     def is_moving(self) -> bool:
@@ -177,6 +184,7 @@ class DrawingCanvas:
         cv2.line(self.strokes, previous, point, color, thickness, cv2.LINE_AA)
         cv2.line(self.mask, previous, point, 255, thickness, cv2.LINE_AA)
         self._last_point = point
+        self._touch()
 
     def erase_point(
         self,
@@ -193,10 +201,12 @@ class DrawingCanvas:
         cv2.line(self.strokes, previous, point, (0, 0, 0), thickness, cv2.LINE_AA)
         cv2.line(self.mask, previous, point, 0, thickness, cv2.LINE_AA)
         self._last_point = point
+        self._touch()
 
     def end_stroke(self) -> None:
         if self._stroke_active and self._paint_stroke is not None:
-            self._fill_closed_stroke(self._paint_stroke)
+            if self._fill_closed_stroke(self._paint_stroke):
+                self._touch()
         self._stroke_active = False
         self._last_point = None
         self._paint_stroke = None
@@ -214,6 +224,7 @@ class DrawingCanvas:
         self.end_stroke()
         self.end_move()
         if self.spatial.begin_move(point, depth_signal):
+            self._touch()
             return True
         binary = (self.mask > 0).astype(np.uint8)
         if not np.any(binary):
@@ -264,6 +275,8 @@ class DrawingCanvas:
             if changed and before is not None:
                 self._record_undo(before)
                 self.spatial.mark_history_recorded()
+            if changed:
+                self._touch()
             return changed
         if self._move is None:
             return False
@@ -276,6 +289,7 @@ class DrawingCanvas:
         self._ensure_move_history()
         self._move.offset = dx, dy
         self._render_move()
+        self._touch()
         return True
 
     def begin_transform(
@@ -341,6 +355,8 @@ class DrawingCanvas:
             if changed and before is not None:
                 self._record_undo(before)
                 self.spatial.mark_history_recorded()
+            if changed:
+                self._touch()
             return changed
         if self._move is None or self._move.transform is None:
             return False
@@ -373,6 +389,7 @@ class DrawingCanvas:
         self._move.scale = scale
         self._move.rotation = rotation
         self._render_move()
+        self._touch()
         return True
 
     def end_transform(
@@ -415,6 +432,7 @@ class DrawingCanvas:
         self.strokes.fill(0)
         self.mask.fill(0)
         self.spatial.clear()
+        self._touch()
 
     def promote_to_3d(
         self,
@@ -463,6 +481,7 @@ class DrawingCanvas:
         self._record_undo(original)
         self.strokes[component] = 0
         self.mask[component] = 0
+        self._touch()
         return True
 
     def adjust_spatial_z(self, change: float) -> bool:
@@ -474,6 +493,7 @@ class DrawingCanvas:
         if not self.spatial.adjust_z(change):
             return False
         self._record_undo(original)
+        self._touch()
         return True
 
     def reset_spatial_rotation(self) -> bool:
@@ -485,6 +505,7 @@ class DrawingCanvas:
         if not self.spatial.reset_selected_rotation():
             return False
         self._record_undo(original)
+        self._touch()
         return True
 
     def undo(self) -> bool:
@@ -494,6 +515,7 @@ class DrawingCanvas:
             return False
         self._redo.append(self._snapshot())
         self._restore(self._undo.pop())
+        self._touch()
         return True
 
     def redo(self) -> bool:
@@ -503,6 +525,7 @@ class DrawingCanvas:
             return False
         self._undo.append(self._snapshot())
         self._restore(self._redo.pop())
+        self._touch()
         return True
 
     def composite(self, frame: np.ndarray) -> np.ndarray:
@@ -528,18 +551,31 @@ class DrawingCanvas:
             raise OSError(f"Could not save drawing to {path}")
         return path
 
-    def project_state(self) -> CanvasProjectState:
-        """Return a detached, editable snapshot including undo and redo history."""
+    def project_state(
+        self,
+        finalize_interactions: bool = True,
+        include_history: bool = True,
+    ) -> CanvasProjectState:
+        """Return detached editable state, optionally with undo/redo history."""
 
-        self.end_stroke()
-        self.end_move()
+        if finalize_interactions:
+            self.end_stroke()
+            self.end_move()
         return CanvasProjectState(
             width=self.width,
             height=self.height,
             history_limit=self.history_limit,
             current=self._snapshot(),
-            undo=[self._copy_snapshot(snapshot) for snapshot in self._undo],
-            redo=[self._copy_snapshot(snapshot) for snapshot in self._redo],
+            undo=(
+                [self._copy_snapshot(snapshot) for snapshot in self._undo]
+                if include_history
+                else []
+            ),
+            redo=(
+                [self._copy_snapshot(snapshot) for snapshot in self._redo]
+                if include_history
+                else []
+            ),
         )
 
     def restore_project_state(self, state: CanvasProjectState) -> None:
@@ -565,6 +601,7 @@ class DrawingCanvas:
         self._last_point = None
         self._paint_stroke = None
         self._move = None
+        self._touch()
 
     def _snapshot(self) -> CanvasSnapshot:
         return CanvasSnapshot(
@@ -583,6 +620,9 @@ class DrawingCanvas:
                 selected_index=snapshot.spatial.selected_index,
             ),
         )
+
+    def _touch(self) -> None:
+        self._revision += 1
 
     def _push_undo(self) -> None:
         self._record_undo(self._snapshot())

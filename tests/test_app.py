@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from gesture_canvas.app import open_selected_camera, parse_args
+from gesture_canvas.app import open_selected_camera, parse_args, startup_project_path
 
 
 def test_explicit_camera_is_opened_without_fallback(monkeypatch):
@@ -51,3 +51,29 @@ def test_project_can_be_selected_at_startup(monkeypatch):
     )
 
     assert parse_args().project == Path("drawing.gcanvas")
+
+
+def test_previous_session_restore_can_be_disabled(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["gesture-canvas", "--no-restore"],
+    )
+
+    assert parse_args().no_restore
+
+
+def test_explicit_project_takes_priority_over_session_recovery(tmp_path):
+    recovery = tmp_path / "recovery.gcanvas"
+    recovery.touch()
+    requested = tmp_path / "drawing.gcanvas"
+
+    assert startup_project_path(requested, recovery, True) == requested
+
+
+def test_session_recovery_requires_an_existing_file_and_restore_flag(tmp_path):
+    recovery = tmp_path / "recovery.gcanvas"
+    assert startup_project_path(None, recovery, True) is None
+    recovery.touch()
+    assert startup_project_path(None, recovery, True) == recovery
+    assert startup_project_path(None, recovery, False) is None
