@@ -1,9 +1,17 @@
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from gesture_canvas.app import open_selected_camera, parse_args, startup_project_path
+from gesture_canvas.app import (
+    apply_layer_action,
+    open_selected_camera,
+    parse_args,
+    startup_project_path,
+)
+from gesture_canvas.canvas import DrawingCanvas
+from gesture_canvas.layer_panel import LayerPanelTarget
 
 
 def test_explicit_camera_is_opened_without_fallback(monkeypatch):
@@ -77,3 +85,16 @@ def test_session_recovery_requires_an_existing_file_and_restore_flag(tmp_path):
     recovery.touch()
     assert startup_project_path(None, recovery, True) == recovery
     assert startup_project_path(None, recovery, False) is None
+
+
+def test_layer_panel_actions_return_clear_feedback():
+    canvas = DrawingCanvas(100, 80)
+    contour = np.asarray(
+        [(20, 20), (80, 20), (80, 60), (20, 60)],
+        dtype=np.float32,
+    )
+    canvas.spatial.add_plane(contour, (40, 80, 220))
+
+    assert apply_layer_action(LayerPanelTarget("lock", "LOCK"), canvas) == "Layer locked"
+    assert apply_layer_action(LayerPanelTarget("duplicate", "COPY"), canvas) == "Layer copied"
+    assert canvas.spatial_object_count == 2

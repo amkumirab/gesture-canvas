@@ -280,3 +280,35 @@ def test_depth_sensitivity_is_configurable_and_validated():
     assert scene.depth_sensitivity == 1.1
     with np.testing.assert_raises(ValueError):
         SpatialScene(200, 160, depth_sensitivity=4)
+
+
+def test_hidden_and_locked_layers_are_not_directly_manipulated():
+    scene = SpatialScene(200, 160)
+    scene.add_plane(square_contour(), (60, 120, 240))
+    frame = np.zeros((160, 200, 3), dtype=np.uint8)
+
+    assert scene.toggle_selected_lock()
+    assert not scene.begin_move((100, 80))
+    assert scene.toggle_selected_visibility()
+    scene.render(frame)
+
+    assert not np.any(frame)
+    assert scene.selected_bounds is None
+    assert scene.selected_guide() is None
+
+
+def test_layer_management_selects_duplicates_reorders_and_deletes():
+    scene = SpatialScene(260, 200)
+    scene.add_plane(square_contour(), (60, 120, 240))
+    scene.add_plane(square_contour(150, 80, 230, 150), (40, 200, 80))
+
+    assert scene.select_layer(0)
+    assert scene.duplicate_selected()
+    assert scene.object_count == 3
+    assert scene.selected_index == 2
+    assert scene.objects[2].position != scene.objects[0].position
+    assert scene.reorder_selected(-1)
+    assert scene.selected_index == 1
+    assert scene.delete_selected()
+    assert scene.object_count == 2
+    assert not scene.select_layer(99)

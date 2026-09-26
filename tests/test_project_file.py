@@ -134,3 +134,61 @@ def test_save_rejects_an_unknown_tool_without_creating_a_file(tmp_path: Path):
         save_project(path, DrawingCanvas(20, 20).project_state(), 7, "purple")
 
     assert not path.exists()
+
+
+def test_project_round_trip_preserves_layer_visibility_and_lock(tmp_path: Path):
+    canvas = DrawingCanvas(100, 80)
+    contour = np.asarray(
+        [(20, 20), (80, 20), (80, 60), (20, 60)],
+        dtype=np.float32,
+    )
+    assert canvas.spatial.add_plane(contour, (40, 80, 220))
+    assert canvas.toggle_spatial_visibility()
+    assert canvas.toggle_spatial_lock()
+
+    path = save_project(
+        tmp_path / "layers.gcanvas",
+        canvas.project_state(),
+        brush_size=7,
+        active_tool="blue",
+    )
+    project = load_project(path)
+    layer = project.canvas.current.spatial.objects[0]
+
+    assert not layer.visible
+    assert layer.locked
+
+
+def test_projects_saved_before_layer_flags_still_open(tmp_path: Path):
+    canvas = DrawingCanvas(100, 80)
+    contour = np.asarray(
+        [(20, 20), (80, 20), (80, 60), (20, 60)],
+        dtype=np.float32,
+    )
+    canvas.spatial.add_plane(contour, (40, 80, 220))
+    path = save_project(
+        tmp_path / "older.gcanvas",
+        canvas.project_state(),
+        brush_size=7,
+        active_tool="blue",
+    )
+
+    with ZipFile(path, "r") as archive:
+        contents = {
+            name: archive.read(name)
+            for name in archive.namelist()
+        }
+    manifest = json.loads(contents["manifest.json"])
+    for snapshot in manifest["snapshots"]:
+        for shape in snapshot["objects"]:
+            shape.pop("visible")
+            shape.pop("locked")
+    contents["manifest.json"] = json.dumps(manifest).encode("utf-8")
+    with ZipFile(path, "w", compression=ZIP_DEFLATED) as archive:
+        for name, payload in contents.items():
+            archive.writestr(name, payload)
+
+    project = load_project(path)
+    layer = project.canvas.current.spatial.objects[0]
+    assert layer.visible
+    assert not layer.locked

@@ -25,6 +25,7 @@ from .gestures import (
 from .help_overlay import draw_help_overlay
 from .interaction_hud import draw_manipulation_hud
 from .interaction import GrabCoordinator, PinchHand
+from .layer_panel import LayerPanel, LayerPanelTarget
 from .landmarks import palm_span, pinch_point, to_pixel
 from .project_file import ProjectFormatError, load_project, save_project
 from .recovery import AutosaveController
@@ -155,6 +156,43 @@ def apply_button(
     return active_tool, ""
 
 
+def apply_layer_action(target: LayerPanelTarget, canvas: DrawingCanvas) -> str:
+    """Apply one layer-panel command and return concise user feedback."""
+
+    if target.key.startswith("select:"):
+        index = int(target.key.partition(":")[2])
+        canvas.select_spatial_layer(index)
+        return f"Layer {index + 1} selected"
+    if target.key == "visibility":
+        if not canvas.toggle_spatial_visibility():
+            return "Select a layer first"
+        selected = canvas.spatial_layers[canvas.selected_spatial_index]
+        return "Layer shown" if selected.visible else "Layer hidden"
+    if target.key == "lock":
+        if not canvas.toggle_spatial_lock():
+            return "Select a layer first"
+        selected = canvas.spatial_layers[canvas.selected_spatial_index]
+        return "Layer locked" if selected.locked else "Layer unlocked"
+    if target.key == "duplicate":
+        return (
+            "Layer copied"
+            if canvas.duplicate_spatial_layer()
+            else "Select a layer first"
+        )
+    if target.key == "delete":
+        return (
+            "Layer deleted"
+            if canvas.delete_spatial_layer()
+            else "Select a layer first"
+        )
+    if target.key in {"raise", "lower"}:
+        change = 1 if target.key == "raise" else -1
+        if canvas.reorder_spatial_layer(change):
+            return "Layer order updated"
+        return "Layer is already at that edge"
+    return ""
+
+
 def hand_key(hand: DetectedHand, index: int, used: set[str]) -> str:
     """Build a stable key from MediaPipe handedness with a safe fallback."""
 
@@ -228,13 +266,18 @@ def main() -> None:
 
     canvas: DrawingCanvas | None = None
     toolbar: Toolbar | None = None
+    layer_panel: LayerPanel | None = None
     selector = DwellSelector(dwell_seconds=0.7)
+    layer_selector = DwellSelector(dwell_seconds=0.65)
     active_tool = "blue"
     brush_size = DEFAULT_BRUSH_SIZE
     show_help = False
+    show_layers = False
     drawing_hand_id: str | None = None
     hover_key: str | None = None
     hover_progress = 0.0
+    layer_hover_key: str | None = None
+    layer_hover_progress = 0.0
     calibration: CalibrationSession | None = None
     current_project: Path | None = None
     pending_project = args.project
@@ -292,6 +335,7 @@ def main() -> None:
                     depth_sensitivity=settings.depth_sensitivity,
                 )
                 toolbar = Toolbar(width)
+                layer_panel = LayerPanel(width, height, toolbar.height)
                 grab_coordinator.selection_radius = settings.selection_radius(width)
                 if pending_startup is not None:
                     try:
@@ -313,6 +357,7 @@ def main() -> None:
                     pending_project = None
                     pending_startup = None
             assert toolbar is not None
+            assert layer_panel is not None
 
             interaction_time = time.monotonic()
             brightness = float(frame.mean())
@@ -472,15 +517,20 @@ def main() -> None:
 
             hover_key = None
             hover_progress = 0.0
+            layer_hover_key = None
+            layer_hover_progress = 0.0
             display_gesture = Gesture.PINCH if manipulation_frame else Gesture.IDLE
             display_confidence = 0.0
+            layer_panel_active = show_layers and not calibration_frame and not show_help
 
             if calibration_frame:
                 canvas.end_stroke()
                 selector.reset()
+                layer_selector.reset()
             elif manipulation_frame:
                 canvas.end_stroke()
                 selector.reset()
+                layer_selector.reset()
             else:
                 available = [hand for hand in hands if not hand.pinching]
                 active_hand = next(
@@ -498,8 +548,37 @@ def main() -> None:
                     display_gesture = active_hand.gesture
                     display_confidence = active_hand.confidence
                     in_toolbar = active_hand.cursor[1] <= toolbar.height
-                    if in_toolbar:
+                    in_layer_panel = (
+                        layer_panel_active
+                        and layer_panel.contains(active_hand.cursor)
+                    )
+                    if in_layer_panel:
                         canvas.end_stroke()
+                        selector.reset()
+                        can_select = active_hand.gesture is Gesture.DRAW
+                        hovered_layer = (
+                            layer_panel.hit_test(
+                                active_hand.cursor,
+                                canvas.spatial_layers,
+                                canvas.selected_spatial_index,
+                            )
+                            if can_select
+                            else None
+                        )
+                        activated, layer_hover_progress = layer_selector.update(
+                            hovered_layer,
+                            interaction_time,
+                        )
+                        layer_hover_key = (
+                            hovered_layer.key if hovered_layer else None
+                        )
+                        if activated:
+                            grab_coordinator.reset(canvas)
+                            status = apply_layer_action(activated, canvas)
+                            status_until = interaction_time + 2
+                    elif in_toolbar:
+                        canvas.end_stroke()
+                        layer_selector.reset()
                         can_select = active_hand.gesture is Gesture.DRAW
                         hovered = (
                             toolbar.hit_test(active_hand.cursor) if can_select else None
@@ -515,6 +594,7 @@ def main() -> None:
                             status_until = interaction_time + 2
                     else:
                         selector.reset()
+                        layer_selector.reset()
                         drawing = (
                             active_hand.gesture is Gesture.DRAW
                             and interaction_time >= draw_blocked_until
@@ -544,6 +624,7 @@ def main() -> None:
                             canvas.end_stroke()
                 else:
                     selector.reset()
+                    layer_selector.reset()
                     if drawing_hand_id is None or not draw_stabilizers[
                         drawing_hand_id
                     ].hold_during_missing(interaction_time):
@@ -634,6 +715,14 @@ def main() -> None:
                     )
 
             toolbar.draw(display, active_tool, hover_key, hover_progress)
+            if layer_panel_active:
+                layer_panel.draw(
+                    display,
+                    canvas.spatial_layers,
+                    canvas.selected_spatial_index,
+                    layer_hover_key,
+                    layer_hover_progress,
+                )
             for hand in hands:
                 is_drawing_hand = hand.key == drawing_hand_id
                 radius = 14 if hand.pinching else 9
@@ -793,6 +882,13 @@ def main() -> None:
                 status_until = time.monotonic() + 2
             elif key == ord("h"):
                 show_help = not show_help
+                layer_selector.reset()
+            elif key in (ord("p"), ord("P")):
+                show_layers = not show_layers
+                selector.reset()
+                layer_selector.reset()
+                status = "Layer panel opened" if show_layers else "Layer panel closed"
+                status_until = time.monotonic() + 2
             elif key in (ord("k"), ord("K")):
                 grab_coordinator.reset(canvas)
                 canvas.end_stroke()

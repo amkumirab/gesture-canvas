@@ -17,6 +17,7 @@ The project works immediately with deterministic hand-geometry rules and process
 - Save and reopen editable `.gcanvas` projects with drawing and 3D state intact
 - Preserve undo and redo history inside project files
 - Recover the most recent drawing session with background autosave
+- Manage 3D layers from an on-canvas panel with selection, visibility, locking, duplication, deletion, and stacking controls
 - Draw with one raised index finger
 - Automatically fill a completed closed shape with its stroke color
 - Erase with two raised fingers
@@ -105,6 +106,8 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Switch transform control | Release only the second pinch, then pinch again |
 | Reset 3D rotation | `R` |
 | Create a 3D layer | Point inside a filled closed shape and press `E` |
+| Open layer panel | `P`, then point at a layer or action and hold |
+| Manage selected layer | Show/hide, lock/unlock, copy, delete, raise, or lower from the panel |
 | Move along X/Y | Pinch the layer and drag left, right, up, or down |
 | Move along Z | Keep pinching and move your hand closer to or farther from the camera |
 | Start a two-hand transform | Hold both pinches steady until `TWO-HAND READY`, then move clearly |
@@ -127,6 +130,7 @@ gesture_canvas/
   settings.py     validated JSON settings and local persistence
   project_file.py versioned editable project save/load and validation
   recovery.py     background session autosave coordination
+  layer_panel.py  pointing-based 3D layer management panel
   canvas.py       drawing, compositing, undo/redo, export
   interaction.py  one- and two-hand manipulation coordination
   spatial.py      3D position, perspective projection, rotation, and depth ordering
@@ -144,7 +148,9 @@ pytest
 
 ## Current scope
 
-Version `0.5.0` adds automatic session recovery. The current 2D drawing, 3D layers, selected tool, and brush size are saved in the background every eight seconds after a change and once more during shutdown. The latest session is restored on the next normal launch, while `--project` opens the requested project and `--no-restore` starts fresh.
+Version `0.6.0` adds an on-canvas layer panel. Press `P`, point at a layer or action, and hold to select, show, hide, lock, unlock, copy, delete, raise, or lower a 3D layer. The panel also shows the selected layer's position, scale, and rotation values.
+
+Layer visibility, lock state, order, and selection are preserved in editable projects and automatic session recovery. Locked layers cannot be grabbed or transformed until they are unlocked from the panel.
 
 Background recovery intentionally stores only the current state to keep frame interruptions minimal. Manually saved `.gcanvas` projects continue to preserve the complete undo and redo history.
 

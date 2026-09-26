@@ -21,6 +21,8 @@ class SpatialShape:
     rotation_x: float = 0.0
     rotation_y: float = 0.0
     rotation_z: float = 0.0
+    visible: bool = True
+    locked: bool = False
 
     def copy(self) -> SpatialShape:
         return SpatialShape(
@@ -31,7 +33,22 @@ class SpatialShape:
             rotation_x=self.rotation_x,
             rotation_y=self.rotation_y,
             rotation_z=self.rotation_z,
+            visible=self.visible,
+            locked=self.locked,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SpatialLayerInfo:
+    index: int
+    color: Color
+    position: tuple[float, float, float]
+    scale: float
+    rotation_x: float
+    rotation_y: float
+    rotation_z: float
+    visible: bool
+    locked: bool
 
 
 @dataclass(slots=True)
@@ -126,7 +143,7 @@ class SpatialScene:
     @property
     def selected_bounds(self) -> tuple[int, int, int, int] | None:
         shape = self._selected()
-        if shape is None:
+        if shape is None or not shape.visible:
             return None
         projected, _ = self._project(shape)
         return cv2.boundingRect(projected.astype(np.float32))
@@ -155,7 +172,7 @@ class SpatialScene:
         if axis_length <= 0:
             raise ValueError("axis_length must be positive")
         shape = self._selected()
-        if shape is None:
+        if shape is None or not shape.visible:
             return None
         local_length = axis_length / max(shape.scale, 0.01)
         axes = np.asarray(
@@ -194,6 +211,86 @@ class SpatialScene:
         self.objects.clear()
         self.selected_index = None
         self._move = None
+
+    def layer_info(self) -> tuple[SpatialLayerInfo, ...]:
+        """Return detached metadata used by the layer-management panel."""
+
+        return tuple(
+            SpatialLayerInfo(
+                index=index,
+                color=shape.color,
+                position=shape.position,
+                scale=shape.scale,
+                rotation_x=shape.rotation_x,
+                rotation_y=shape.rotation_y,
+                rotation_z=shape.rotation_z,
+                visible=shape.visible,
+                locked=shape.locked,
+            )
+            for index, shape in enumerate(self.objects)
+        )
+
+    def select_layer(self, index: int) -> bool:
+        if not 0 <= index < len(self.objects) or index == self.selected_index:
+            return False
+        self.end_move()
+        self.selected_index = index
+        return True
+
+    def toggle_selected_visibility(self) -> bool:
+        shape = self._selected()
+        if shape is None:
+            return False
+        self.end_move()
+        shape.visible = not shape.visible
+        return True
+
+    def toggle_selected_lock(self) -> bool:
+        shape = self._selected()
+        if shape is None:
+            return False
+        self.end_move()
+        shape.locked = not shape.locked
+        return True
+
+    def duplicate_selected(self, offset: float = 18.0) -> bool:
+        shape = self._selected()
+        if shape is None:
+            return False
+        self.end_move()
+        duplicate = shape.copy()
+        x, y, z = duplicate.position
+        duplicate.position = (x + offset, y + offset, z)
+        duplicate.visible = True
+        duplicate.locked = False
+        self.objects.append(duplicate)
+        self.selected_index = len(self.objects) - 1
+        return True
+
+    def delete_selected(self) -> bool:
+        if self.selected_index is None or not self.objects:
+            return False
+        self.end_move()
+        removed = self.selected_index
+        del self.objects[removed]
+        self.selected_index = (
+            min(removed, len(self.objects) - 1) if self.objects else None
+        )
+        return True
+
+    def reorder_selected(self, change: int) -> bool:
+        """Move the selected layer in stacking order by one or more positions."""
+
+        if self.selected_index is None or change == 0:
+            return False
+        target = int(np.clip(self.selected_index + change, 0, len(self.objects) - 1))
+        if target == self.selected_index:
+            return False
+        self.end_move()
+        shape = self.objects.pop(self.selected_index)
+        self.objects.insert(target, shape)
+        self.selected_index = target
+        return True
 
     def add_plane(
         self,
@@ -241,7 +338,8 @@ class SpatialScene:
             reverse=True,
         )
         for index in indices:
-            if self._hit_test(self.objects[index], point):
+            shape = self.objects[index]
+            if shape.visible and not shape.locked and self._hit_test(shape, point):
                 self.selected_index = index
                 self._move = SpatialMove(
                     object_index=index,
@@ -450,7 +548,7 @@ class SpatialScene:
 
     def adjust_z(self, change: float) -> bool:
         shape = self._selected()
-        if shape is None:
+        if shape is None or shape.locked:
             return False
         x, y, current_z = shape.position
         z_position = self._clamp_z(current_z + change)
@@ -463,7 +561,7 @@ class SpatialScene:
         """Restore the selected layer to a front-facing orientation."""
 
         shape = self._selected()
-        if shape is None:
+        if shape is None or shape.locked:
             return False
         if np.allclose(
             (shape.rotation_x, shape.rotation_y, shape.rotation_z),
@@ -479,9 +577,13 @@ class SpatialScene:
     def render(self, frame: np.ndarray) -> None:
         if frame.shape[:2] != (self.height, self.width):
             raise ValueError("Frame and scene dimensions do not match")
-        ordered = sorted(self.objects, key=lambda shape: shape.position[2])
-        for shape in ordered:
-            self._render_shape(frame, shape)
+        ordered = sorted(
+            enumerate(self.objects),
+            key=lambda item: (item[1].position[2], item[0]),
+        )
+        for _, shape in ordered:
+            if shape.visible:
+                self._render_shape(frame, shape)
 
     def _selected(self) -> SpatialShape | None:
         if self.selected_index is None or self.selected_index >= len(self.objects):

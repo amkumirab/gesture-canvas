@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from math import atan2, degrees, hypot
 from pathlib import Path
@@ -9,7 +10,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .spatial import SpatialGuide, SpatialScene, SpatialSnapshot
+from .spatial import SpatialGuide, SpatialLayerInfo, SpatialScene, SpatialSnapshot
 
 
 @dataclass(slots=True)
@@ -141,6 +142,14 @@ class DrawingCanvas:
     @property
     def spatial_object_count(self) -> int:
         return self.spatial.object_count
+
+    @property
+    def spatial_layers(self) -> tuple[SpatialLayerInfo, ...]:
+        return self.spatial.layer_info()
+
+    @property
+    def selected_spatial_index(self) -> int | None:
+        return self.spatial.selected_index
 
     @property
     def selected_is_spatial(self) -> bool:
@@ -508,6 +517,37 @@ class DrawingCanvas:
         self._touch()
         return True
 
+    def select_spatial_layer(self, index: int) -> bool:
+        """Select a 3D layer without creating an undo-history entry."""
+
+        self.end_stroke()
+        self.end_move()
+        if not self.spatial.select_layer(index):
+            return False
+        self._touch()
+        return True
+
+    def toggle_spatial_visibility(self) -> bool:
+        return self._apply_spatial_layer_edit(
+            self.spatial.toggle_selected_visibility
+        )
+
+    def toggle_spatial_lock(self) -> bool:
+        return self._apply_spatial_layer_edit(self.spatial.toggle_selected_lock)
+
+    def duplicate_spatial_layer(self) -> bool:
+        return self._apply_spatial_layer_edit(self.spatial.duplicate_selected)
+
+    def delete_spatial_layer(self) -> bool:
+        return self._apply_spatial_layer_edit(self.spatial.delete_selected)
+
+    def reorder_spatial_layer(self, change: int) -> bool:
+        if change == 0:
+            return False
+        return self._apply_spatial_layer_edit(
+            lambda: self.spatial.reorder_selected(change)
+        )
+
     def undo(self) -> bool:
         self.end_stroke()
         self.end_move()
@@ -623,6 +663,16 @@ class DrawingCanvas:
 
     def _touch(self) -> None:
         self._revision += 1
+
+    def _apply_spatial_layer_edit(self, edit: Callable[[], bool]) -> bool:
+        self.end_stroke()
+        self.end_move()
+        original = self._snapshot()
+        if not edit():
+            return False
+        self._record_undo(original)
+        self._touch()
+        return True
 
     def _push_undo(self) -> None:
         self._record_undo(self._snapshot())

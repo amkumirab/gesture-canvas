@@ -325,3 +325,24 @@ def test_spatial_shape_xyz_movement_is_undoable():
 
     assert canvas.undo()
     assert canvas.spatial.objects[0].position == original_position
+
+
+def test_spatial_layer_panel_edits_are_undoable():
+    canvas = DrawingCanvas(180, 160)
+    contour = np.asarray(
+        [(40, 40), (140, 40), (140, 120), (40, 120)],
+        dtype=np.float32,
+    )
+    assert canvas.spatial.add_plane(contour, (40, 80, 220))
+
+    assert canvas.toggle_spatial_lock()
+    assert canvas.spatial_layers[0].locked
+    assert canvas.undo()
+    assert not canvas.spatial_layers[0].locked
+
+    assert canvas.duplicate_spatial_layer()
+    assert canvas.spatial_object_count == 2
+    assert canvas.delete_spatial_layer()
+    assert canvas.spatial_object_count == 1
+    assert canvas.undo()
+    assert canvas.spatial_object_count == 2

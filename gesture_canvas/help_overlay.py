@@ -15,6 +15,7 @@ HELP_ITEMS = (
     ("Session recovery", "Automatic every 8 seconds"),
     ("Export PNG / clear", "S / C"),
     ("Create 3D layer", "Point inside a closed shape, then E"),
+    ("Layer panel", "P, then point and hold"),
     ("Select tool", "Point at toolbar and hold"),
     ("Move X / Y", "Pinch a drawing and drag"),
     ("Move Z", "While pinching, move hand closer / farther"),

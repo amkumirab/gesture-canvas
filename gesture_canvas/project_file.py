@@ -192,6 +192,8 @@ def _snapshot_manifest(snapshot: CanvasSnapshot, index: int) -> dict[str, Any]:
                     float(shape.rotation_y),
                     float(shape.rotation_z),
                 ],
+                "visible": shape.visible,
+                "locked": shape.locked,
             }
             for shape in spatial.objects
         ],
@@ -357,6 +359,8 @@ def _decode_shape(value: object) -> SpatialShape:
         rotation_x=float(rotation[0]),
         rotation_y=float(rotation[1]),
         rotation_z=float(rotation[2]),
+        visible=_boolean(data.get("visible", True), "spatial visibility"),
+        locked=_boolean(data.get("locked", False), "spatial lock"),
     )
 
 
@@ -431,6 +435,8 @@ def _validate_spatial_snapshot(snapshot: SpatialSnapshot) -> None:
             raise ValueError("Project spatial color is outside the supported range")
         if not 0.05 <= float(shape.scale) <= 20:
             raise ValueError("Project spatial scale is outside the supported range")
+        if not isinstance(shape.visible, bool) or not isinstance(shape.locked, bool):
+            raise ValueError("Project spatial layer flags are invalid")
 
 
 def _object(value: object, label: str) -> dict[str, Any]:
@@ -452,6 +458,12 @@ def _finite_number(value: object, label: str) -> float:
     if not isfinite(number):
         raise ProjectFormatError(f"Project {label} is invalid")
     return number
+
+
+def _boolean(value: object, label: str) -> bool:
+    if not isinstance(value, bool):
+        raise ProjectFormatError(f"Project {label} is invalid")
+    return value
 
 
 def _number_tuple(
