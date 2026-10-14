@@ -312,3 +312,40 @@ def test_layer_management_selects_duplicates_reorders_and_deletes():
     assert scene.delete_selected()
     assert scene.object_count == 2
     assert not scene.select_layer(99)
+
+
+def test_grab_selects_rendered_front_layer_when_depths_are_equal():
+    scene = SpatialScene(200, 160)
+    scene.add_plane(square_contour(), (255, 0, 0))
+    scene.add_plane(square_contour(), (0, 255, 0))
+    frame = np.zeros((160, 200, 3), dtype=np.uint8)
+    scene.render(frame)
+    np.testing.assert_array_equal(frame[80, 100], (0, 255, 0))
+
+    assert scene.begin_move((100, 80))
+    assert scene.selected_index == 1
+    assert scene.update_move((120, 90))
+    assert scene.objects[0].position == (100.0, 80.0, 0.0)
+    assert scene.objects[1].position == (120.0, 90.0, 0.0)
+
+
+def test_grab_follows_front_layer_after_reordering_equal_depth_layers():
+    scene = SpatialScene(200, 160)
+    scene.add_plane(square_contour(), (255, 0, 0))
+    scene.add_plane(square_contour(), (0, 255, 0))
+    assert scene.reorder_selected(-1)
+    frame = np.zeros((160, 200, 3), dtype=np.uint8)
+    scene.render(frame)
+    np.testing.assert_array_equal(frame[80, 100], (255, 0, 0))
+
+    assert scene.begin_move((100, 80))
+    assert scene.objects[scene.selected_index].color == (255, 0, 0)
+
+
+def test_grab_prioritizes_depth_over_layer_insertion_order():
+    scene = SpatialScene(200, 160)
+    scene.add_plane(square_contour(), (255, 0, 0), z_position=40)
+    scene.add_plane(square_contour(), (0, 255, 0), z_position=-40)
+
+    assert scene.begin_move((100, 80))
+    assert scene.selected_index == 0

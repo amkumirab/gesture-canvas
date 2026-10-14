@@ -334,7 +334,7 @@ class SpatialScene:
         self.end_move()
         indices = sorted(
             range(len(self.objects)),
-            key=lambda index: self.objects[index].position[2],
+            key=lambda index: (self.objects[index].position[2], index),
             reverse=True,
         )
         for index in indices:
