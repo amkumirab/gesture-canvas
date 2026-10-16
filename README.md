@@ -8,7 +8,7 @@ The project works immediately with deterministic hand-geometry rules and process
 
 **Input:** live webcam frames and the 21 hand landmarks detected by MediaPipe.
 
-**Output:** a low-latency drawing canvas controlled without a mouse, plus PNG exports on a clean white background.
+**Output:** a low-latency drawing canvas controlled without a mouse, plus PNG images and MP4 session recordings.
 
 ## Features
 
@@ -18,6 +18,7 @@ The project works immediately with deterministic hand-geometry rules and process
 - Preserve undo and redo history inside project files
 - Recover the most recent drawing session with background autosave
 - Manage 3D layers from an on-canvas panel with selection, visibility, locking, duplication, deletion, and stacking controls
+- Record the complete camera interface or a clean canvas-only MP4 video
 - Draw with one raised index finger
 - Automatically fill a completed closed shape with its stroke color
 - Erase with two raised fingers
@@ -115,6 +116,8 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Move farther / closer by keyboard | `-` / `+` |
 | XYZ and depth guides | Displayed automatically while a 3D layer is selected |
 | Export PNG | Toolbar `SAVE` or `S` |
+| Start / stop MP4 recording | `F9` or `V` |
+| Switch recording mode | `M` while idle: camera interface or clean canvas |
 | Undo / Redo | Toolbar buttons or `Z` / `Y` |
 | Clear | Toolbar `CLEAR` or `C` |
 | Thinner / thicker brush | `[` / `]` |
@@ -131,6 +134,7 @@ gesture_canvas/
   project_file.py versioned editable project save/load and validation
   recovery.py     background session autosave coordination
   layer_panel.py  pointing-based 3D layer management panel
+  recording.py    safe camera and clean-canvas MP4 recording
   canvas.py       drawing, compositing, undo/redo, export
   interaction.py  one- and two-hand manipulation coordination
   spatial.py      3D position, perspective projection, rotation, and depth ordering
@@ -148,7 +152,11 @@ pytest
 
 ## Current scope
 
-Version `0.6.0` adds an on-canvas layer panel. Press `P`, point at a layer or action, and hold to select, show, hide, lock, unlock, copy, delete, raise, or lower a 3D layer. The panel also shows the selected layer's position, scale, and rotation values.
+Version `0.7.0` adds MP4 session recording. Press `F9` or `V` to start and stop, and press `M` before recording to switch between the complete camera interface and a clean canvas-only video. The recording timer and active mode remain visible while capturing.
+
+Recordings are finalized when recording stops or the application closes. Empty or failed recordings are removed instead of leaving unusable video files. Use `--record-mode canvas` to start directly in clean-canvas mode.
+
+Frames are sampled using elapsed time: slower processing repeats the previous frame and faster processing drops excess frames, keeping playback at the captured speed. Videos have no audio and are saved under `outputs` by default; use `--output path/to/folder` to choose another folder.
 
 Layer visibility, lock state, order, and selection are preserved in editable projects and automatic session recovery. Locked layers cannot be grabbed or transformed until they are unlocked from the panel.
 
@@ -160,7 +168,7 @@ Project saving is atomic: the existing file is replaced only after the new archi
 
 ## Privacy
 
-All webcam processing happens locally. No frame is uploaded to a server. Calibration stores only numeric settings, never camera frames. Session recovery contains only the drawing canvas and workspace state. On Windows, settings and recovery data are saved under `%LOCALAPPDATA%\gesture-canvas`.
+All webcam processing happens locally. No frame is uploaded to a server. Camera-mode recordings contain the visible camera view and are written only to the selected local output folder. Calibration stores only numeric settings, never camera frames. Session recovery contains only the drawing canvas and workspace state. On Windows, settings and recovery data are saved under `%LOCALAPPDATA%\gesture-canvas`.
 
 ## License
 

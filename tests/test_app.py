@@ -6,6 +6,9 @@ import pytest
 
 from gesture_canvas.app import (
     apply_layer_action,
+    camera_recording_fps,
+    frame_for_recording,
+    is_record_toggle_key,
     open_selected_camera,
     parse_args,
     startup_project_path,
@@ -98,3 +101,46 @@ def test_layer_panel_actions_return_clear_feedback():
     assert apply_layer_action(LayerPanelTarget("lock", "LOCK"), canvas) == "Layer locked"
     assert apply_layer_action(LayerPanelTarget("duplicate", "COPY"), canvas) == "Layer copied"
     assert canvas.spatial_object_count == 2
+
+
+def test_record_mode_can_be_selected_at_startup(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["gesture-canvas", "--record-mode", "canvas"],
+    )
+    assert parse_args().record_mode == "canvas"
+
+
+@pytest.mark.parametrize("key", [ord("v"), ord("V"), 0x780000, 65478, 63244])
+def test_record_shortcut_supports_common_backends(key):
+    assert is_record_toggle_key(key)
+    assert not is_record_toggle_key(ord("r"))
+
+
+def test_camera_recording_fps_uses_valid_value_or_fallback():
+    class Camera:
+        def __init__(self, fps):
+            self.fps = fps
+
+        def get(self, _property):
+            return self.fps
+
+    assert camera_recording_fps(Camera(60)) == 60
+    assert camera_recording_fps(Camera(0)) == 30
+    assert camera_recording_fps(object()) == 30
+
+
+def test_clean_recording_frame_excludes_camera_view():
+    canvas = DrawingCanvas(40, 30)
+    canvas.add_point((5, 10), (20, 30, 40), 3)
+    canvas.add_point((20, 10), (20, 30, 40), 3)
+    canvas.end_stroke()
+    display = np.full((30, 40, 3), 90, dtype=np.uint8)
+
+    assert frame_for_recording(canvas, display, "camera") is display
+    clean = frame_for_recording(canvas, display, "canvas")
+    assert np.all(clean[0, 0] == 255)
+    assert not np.all(clean[10, 10] == 255)
+    with pytest.raises(ValueError, match="mode"):
+        frame_for_recording(canvas, display, "unknown")

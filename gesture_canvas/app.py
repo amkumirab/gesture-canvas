@@ -10,6 +10,7 @@ from math import isfinite
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from .camera import DetectedHand, create_hand_tracker, detect_hands, open_camera
 from .calibration import CalibrationMeasurement, CalibrationSession
@@ -28,6 +29,7 @@ from .interaction import GrabCoordinator, PinchHand
 from .layer_panel import LayerPanel, LayerPanelTarget
 from .landmarks import palm_span, pinch_point, to_pixel
 from .project_file import ProjectFormatError, load_project, save_project
+from .recording import SessionRecorder, draw_recording_hud
 from .recovery import AutosaveController
 from .smoothing import AdaptiveSmoother, ScalarSmoother
 from .settings import (
@@ -87,6 +89,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Start with a blank canvas instead of restoring the previous session",
     )
+    parser.add_argument(
+        "--record-mode",
+        choices=("camera", "canvas"),
+        default="camera",
+        help="Initial MP4 recording mode (camera view or clean canvas)",
+    )
     parser.add_argument("--mirror", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 
@@ -94,6 +102,43 @@ def parse_args() -> argparse.Namespace:
 def save_canvas(canvas: DrawingCanvas, output_dir: Path) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return canvas.export(output_dir / f"gesture_canvas_{stamp}.png")
+
+
+def camera_recording_fps(camera) -> float:
+    """Return a usable camera FPS value with a stable fallback."""
+
+    try:
+        value = float(camera.get(cv2.CAP_PROP_FPS))
+    except (AttributeError, TypeError, ValueError):
+        return 30.0
+    return value if isfinite(value) and 5.0 <= value <= 120.0 else 30.0
+
+
+def is_record_toggle_key(raw_key: int) -> bool:
+    """Recognize F9 across common OpenCV backends, with V as a fallback."""
+
+    return raw_key in {
+        ord("v"),
+        ord("V"),
+        0x780000,  # Windows
+        65478,  # X11
+        63244,  # macOS
+        0x01000038,  # Qt
+    }
+
+
+def frame_for_recording(
+    canvas: DrawingCanvas,
+    display: np.ndarray,
+    mode: str,
+) -> np.ndarray:
+    """Return either the complete interface or artwork on a clean background."""
+
+    if mode == "camera":
+        return display
+    if mode == "canvas":
+        return canvas.composite(np.full_like(display, 255))
+    raise ValueError("Unknown recording mode")
 
 
 def choose_project_file(save: bool, current: Path | None = None) -> Path | None:
@@ -288,6 +333,11 @@ def main() -> None:
         restore_previous=not args.no_restore,
     )
     autosave = AutosaveController(recovery_path)
+    recorder = SessionRecorder(
+        args.output,
+        fps=camera_recording_fps(camera),
+        mode=args.record_mode,
+    )
     status = (
         "Calibration loaded - press K to recalibrate"
         if settings.calibrated
@@ -789,10 +839,39 @@ def main() -> None:
             elif show_help:
                 draw_help_overlay(display, toolbar.height)
 
+            if recorder.is_recording:
+                draw_recording_hud(display, recorder.elapsed(now), recorder.mode)
+                try:
+                    recorder.write(frame_for_recording(canvas, display, recorder.mode))
+                except (OSError, ValueError) as error:
+                    try:
+                        recorder.stop()
+                    except OSError:
+                        pass
+                    status = f"Recording stopped: {error}"
+                    status_until = time.monotonic() + 4
+
             cv2.imshow("Gesture Canvas", display)
-            key = cv2.waitKey(1) & 0xFF
+            raw_key = cv2.waitKeyEx(1)
+            key = raw_key if 0 <= raw_key <= 0xFF else raw_key & 0xFF
             if key == ord("q"):
                 break
+            if is_record_toggle_key(raw_key):
+                try:
+                    if recorder.is_recording:
+                        saved_video = recorder.stop()
+                        status = (
+                            f"Recording saved: {saved_video.name}"
+                            if saved_video is not None
+                            else "Recording cancelled: no frames captured"
+                        )
+                    else:
+                        recorder.start((width, height))
+                        status = f"Recording started: {recorder.mode} mode"
+                except (OSError, RuntimeError, ValueError) as error:
+                    status = f"Recording unavailable: {error}"
+                status_until = time.monotonic() + 4
+                key = -1
             if calibration is not None:
                 if key == 27:
                     calibration = None
@@ -889,6 +968,13 @@ def main() -> None:
                 layer_selector.reset()
                 status = "Layer panel opened" if show_layers else "Layer panel closed"
                 status_until = time.monotonic() + 2
+            elif key in (ord("m"), ord("M")):
+                if recorder.is_recording:
+                    status = "Stop recording before changing mode"
+                else:
+                    mode = recorder.toggle_mode()
+                    status = f"Recording mode: {mode}"
+                status_until = time.monotonic() + 2
             elif key in (ord("k"), ord("K")):
                 grab_coordinator.reset(canvas)
                 canvas.end_stroke()
@@ -958,6 +1044,10 @@ def main() -> None:
         except (OSError, ValueError):
             pass
         finally:
+            try:
+                recorder.close()
+            except OSError:
+                pass
             autosave.close()
             tracker.close()
             camera.release()

@@ -14,6 +14,8 @@ HELP_ITEMS = (
     ("Save / open project", "Ctrl+S / Ctrl+O"),
     ("Session recovery", "Automatic every 8 seconds"),
     ("Export PNG / clear", "S / C"),
+    ("Start / stop recording", "F9 or V"),
+    ("Recording mode", "M: camera / clean canvas"),
     ("Create 3D layer", "Point inside a closed shape, then E"),
     ("Layer panel", "P, then point and hold"),
     ("Select tool", "Point at toolbar and hold"),
