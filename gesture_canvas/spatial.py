@@ -84,6 +84,7 @@ class SpatialTransform:
     candidate: str = "waiting"
     candidate_frames: int = 0
     decision_frames: int = 0
+    rebase_required: bool = False
 
 
 @dataclass(slots=True)
@@ -112,6 +113,7 @@ class SpatialScene:
         self.width = width
         self.height = height
         self.depth_sensitivity = depth_sensitivity
+        self._transform_mode = "auto"
         self.objects: list[SpatialShape] = []
         self.selected_index: int | None = None
         self._move: SpatialMove | None = None
@@ -160,6 +162,22 @@ class SpatialScene:
         if self._move is None or self._move.transform is None:
             return None
         return self._move.transform.control
+
+    @property
+    def transform_mode(self) -> str:
+        return self._transform_mode
+
+    def set_transform_mode(self, mode: str) -> bool:
+        """Choose a session control and rebase an active two-hand gesture."""
+
+        if mode not in {"auto", "scale", "tilt_x", "tilt_y", "spin"}:
+            raise ValueError(f"Unknown transform mode: {mode}")
+        if mode == self._transform_mode:
+            return False
+        if self._move is not None and self._move.transform is not None:
+            self._move.transform.rebase_required = True
+        self._transform_mode = mode
+        return True
 
     @property
     def selected_z(self) -> float | None:
@@ -401,6 +419,9 @@ class SpatialScene:
                 second_depth_signal,
             ),
             previous_angle=angle,
+            control=(
+                "waiting" if self._transform_mode == "auto" else self._transform_mode
+            ),
         )
         return True
 
@@ -416,6 +437,15 @@ class SpatialScene:
         if not 0 < minimum_scale <= maximum_scale:
             raise ValueError("Expected 0 < minimum_scale <= maximum_scale")
         if self._move is None or self._move.transform is None:
+            return False
+
+        if self._move.transform.rebase_required:
+            self.begin_transform(
+                first,
+                second,
+                first_depth_signal=first_depth_signal,
+                second_depth_signal=second_depth_signal,
+            )
             return False
 
         shape = self.objects[self._move.object_index]

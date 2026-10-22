@@ -27,6 +27,7 @@ The project works immediately with deterministic hand-geometry rules and process
 - Stable pinch-center control with short hand-tracking dropout recovery
 - Scale and rotate a grabbed drawing by pinching it with both hands
 - Intent-locked 3D transforms that isolate scale, spin, and tilt
+- Explicit scale and X/Y/Z rotation controls with number shortcuts and a persistent mode indicator
 - Stable two-hand transform arming with multi-frame intent confirmation
 - Continuous rotation when hand labels briefly swap during tracking
 - Smoothly return to one-hand movement when either hand releases
@@ -105,6 +106,7 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Spin | Turn the imaginary line between the two pinches like a steering wheel |
 | Tilt | Move both pinches together, or move one hand closer than the other |
 | Switch transform control | Release only the second pinch, then pinch again |
+| Select 3D transform mode | `0` auto, `1` scale, `2` X tilt, `3` Y tilt, `4` Z spin |
 | Reset 3D rotation | `R` |
 | Create a 3D layer | Point inside a filled closed shape and press `E` |
 | Open layer panel | `P`, then point at a layer or action and hold |
@@ -123,6 +125,24 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Thinner / thicker brush | `[` / `]` |
 | Show / hide controls guide | `H` |
 | Quit | `Q` or `Esc` |
+
+## Explicit 3D transform controls
+
+Create a 3D layer with `E`, then select a control using the number keys. Hold two pinches steady to start manipulating the layer:
+
+| Key | Control | Movement |
+|---|---|---|
+| `0` | Automatic | The existing intent detector chooses a control from your motion |
+| `1` | Scale only | Move the pinches apart or together |
+| `2` | X tilt only | Move both pinches up or down together |
+| `3` | Y tilt only | Move both pinches left or right together, or change their relative hand depth |
+| `4` | Z spin only | Turn the line between the pinches like a steering wheel |
+
+Manual controls bypass intent detection and leave the other rotation axes, size, and position unchanged during two-hand transforms. A small indicator above the bottom status bar shows the selected control even between gestures. The projected axis guide highlights the selected rotation axis.
+
+You can switch controls while holding both pinches. The layer keeps its current orientation and size, and the next frame establishes a new gesture reference. Choosing the same control again does not interrupt a gesture. Releasing one hand still returns to one-hand X/Y/Z movement. Number-key controls apply only to 3D layers; ordinary 2D drawings retain their existing two-hand behavior.
+
+The selected control is a session preference, not drawing content: it survives Undo/Redo and opening a project during the session, but each new application launch starts in automatic mode.
 
 ## Project structure
 
@@ -152,7 +172,9 @@ pytest
 
 ## Current scope
 
-Version `0.7.0` adds MP4 session recording. Press `F9` or `V` to start and stop, and press `M` before recording to switch between the complete camera interface and a clean canvas-only video. The recording timer and active mode remain visible while capturing.
+Version `0.8.0` adds explicit 3D scale and rotation controls. Use `0` for automatic detection, `1` for scale, `2` for X tilt, `3` for Y tilt, and `4` for Z spin. Controls can be changed during a two-hand grab without resetting the layer's orientation or size.
+
+MP4 recording remains available with `F9` or `V` to start and stop. Press `M` before recording to switch between the complete camera interface and a clean canvas-only video. The recording timer and active mode remain visible while capturing.
 
 Recordings are finalized when recording stops or the application closes. Empty or failed recordings are removed instead of leaving unusable video files. Use `--record-mode canvas` to start directly in clean-canvas mode.
 

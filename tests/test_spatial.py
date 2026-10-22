@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from gesture_canvas.spatial import SpatialScene
 
@@ -177,9 +178,11 @@ def test_sustained_mixed_motion_eventually_uses_the_strongest_intent():
     assert scene.transform_control == "spin"
 
 
-def test_endpoint_order_swap_does_not_create_a_rotation_jump():
+@pytest.mark.parametrize("mode", ["auto", "spin"])
+def test_endpoint_order_swap_does_not_create_a_rotation_jump(mode):
     scene = SpatialScene(240, 180)
     scene.add_plane(square_contour(), (60, 120, 240))
+    scene.set_transform_mode(mode)
     assert scene.begin_move((100, 80))
     assert scene.begin_transform((60, 80), (140, 80))
     for _ in range(12):
@@ -349,3 +352,78 @@ def test_grab_prioritizes_depth_over_layer_insertion_order():
 
     assert scene.begin_move((100, 80))
     assert scene.selected_index == 0
+
+
+@pytest.mark.parametrize(
+    ("mode", "changed_index"),
+    [("scale", 0), ("tilt_x", 1), ("tilt_y", 2), ("spin", 3)],
+)
+def test_manual_transform_changes_only_the_selected_control(mode, changed_index):
+    scene = SpatialScene(240, 180)
+    scene.add_plane(square_contour(), (60, 120, 240))
+    scene.set_transform_mode(mode)
+    assert scene.begin_move((100, 80))
+    assert scene.begin_transform((60, 80), (140, 80))
+    assert scene.transform_control == mode
+
+    assert scene.update_transform((40, 80), (180, 140))
+
+    initial = (1.0, 0.0, 0.0, 0.0)
+    for index, value in enumerate(scene.transform_info):
+        if index == changed_index:
+            assert value != initial[index]
+        else:
+            assert value == initial[index]
+    assert scene.objects[0].position == (100.0, 80.0, 0.0)
+
+
+def test_switching_transform_mode_keeps_shape_and_rebases_next_gesture():
+    scene = SpatialScene(240, 180)
+    scene.add_plane(square_contour(), (60, 120, 240))
+    scene.set_transform_mode("scale")
+    scene.begin_move((100, 80))
+    scene.begin_transform((60, 80), (140, 80))
+    scene.update_transform((40, 80), (160, 80))
+    before = scene.transform_info
+
+    assert scene.set_transform_mode("tilt_x")
+    assert scene.is_moving
+    assert scene.is_transforming
+    assert scene.transform_info == before
+    scene.begin_transform((40, 80), (160, 80))
+    assert not scene.update_transform((40, 80), (160, 80))
+    assert scene.transform_info == before
+    assert scene.update_transform((40, 100), (160, 100))
+    assert scene.transform_info[0] == before[0]
+    assert scene.transform_info[1] > before[1]
+
+
+def test_return_to_auto_mode_restores_intent_detection():
+    scene = SpatialScene(240, 180)
+    scene.add_plane(square_contour(), (60, 120, 240))
+    assert scene.transform_mode == "auto"
+    scene.set_transform_mode("spin")
+    scene.begin_move((100, 80))
+    scene.begin_transform((60, 80), (140, 80))
+
+    assert scene.set_transform_mode("auto")
+    scene.begin_transform((60, 80), (140, 80))
+    assert scene.transform_control == "waiting"
+    assert not scene.update_transform((61, 81), (141, 81))
+    assert scene.transform_control == "waiting"
+    assert scene.update_transform((40, 80), (160, 80))
+    assert scene.transform_control == "scale"
+
+
+def test_invalid_or_unchanged_transform_mode_does_not_interrupt_a_gesture():
+    scene = SpatialScene(240, 180)
+    scene.add_plane(square_contour(), (60, 120, 240))
+    scene.set_transform_mode("spin")
+    scene.begin_move((100, 80))
+    scene.begin_transform((60, 80), (140, 80))
+
+    with pytest.raises(ValueError, match="mode"):
+        scene.set_transform_mode("unknown")
+    assert not scene.set_transform_mode("spin")
+    assert scene.is_transforming
+    assert scene.transform_mode == "spin"

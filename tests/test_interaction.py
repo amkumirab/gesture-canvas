@@ -1,3 +1,6 @@
+import numpy as np
+import pytest
+
 from gesture_canvas.canvas import DrawingCanvas
 from gesture_canvas.interaction import GrabCoordinator, PinchHand
 
@@ -10,8 +13,10 @@ def create_canvas_with_line() -> DrawingCanvas:
     return canvas
 
 
-def test_coordinator_moves_then_transforms_then_returns_to_one_hand():
+@pytest.mark.parametrize("spatial_mode", ["auto", "tilt_x"])
+def test_coordinator_moves_then_transforms_then_returns_to_one_hand(spatial_mode):
     canvas = create_canvas_with_line()
+    canvas.spatial.set_transform_mode(spatial_mode)
     coordinator = GrabCoordinator()
     first = PinchHand("left", (100, 90), pinching=True, started=True)
     assert coordinator.update(canvas, [first])
@@ -170,7 +175,8 @@ def test_coordinator_manipulates_a_spatial_shape_in_xyz():
     assert rotation_z == 0
 
 
-def test_spatial_transform_freezes_and_rebases_during_hand_dropout():
+@pytest.mark.parametrize("mode", ["auto", "spin"])
+def test_spatial_transform_freezes_and_rebases_during_hand_dropout(mode):
     canvas = DrawingCanvas(240, 180)
     for point in [
         (60, 45),
@@ -184,6 +190,7 @@ def test_spatial_transform_freezes_and_rebases_during_hand_dropout():
     canvas.end_stroke()
     assert canvas.promote_to_3d((120, 90))
 
+    canvas.spatial.set_transform_mode(mode)
     coordinator = GrabCoordinator(missing_grace_frames=3)
     first = PinchHand("left", (100, 90), pinching=True, started=True)
     second = PinchHand("right", (180, 90), pinching=True, started=True)
@@ -205,3 +212,63 @@ def test_spatial_transform_freezes_and_rebases_during_hand_dropout():
     coordinator.update(canvas, [moved_first, recovered_second])
     assert not coordinator.recovering_tracking
     assert canvas.spatial_transform_info[3] == rotation_before
+
+
+def test_manual_control_switch_keeps_two_hand_grab_and_one_undo_operation():
+    canvas = DrawingCanvas(240, 180)
+    contour = np.asarray([(60, 45), (180, 45), (180, 135), (60, 135)], dtype=np.float32)
+    canvas.spatial.add_plane(contour, (60, 120, 240))
+    canvas.spatial.set_transform_mode("spin")
+    coordinator = GrabCoordinator(transform_arm_frames=1)
+    first = PinchHand("left", (100, 90), pinching=True, started=True)
+    second = PinchHand("right", (180, 90), pinching=True, started=True)
+    coordinator.update(canvas, [first])
+    coordinator.update(canvas, [first, second])
+    turned = PinchHand("right", (140, 130), pinching=True)
+    coordinator.update(canvas, [first, turned])
+    before_switch = canvas.spatial_transform_info
+    assert before_switch[3] > 0
+
+    canvas.spatial.set_transform_mode("tilt_y")
+    coordinator.update(canvas, [first, turned])
+    assert canvas.is_transforming
+    assert canvas.spatial_transform_info == before_switch
+    moved_first = PinchHand("left", (120, 90), pinching=True)
+    moved_second = PinchHand("right", (160, 130), pinching=True)
+    coordinator.update(canvas, [moved_first, moved_second])
+    assert canvas.spatial_transform_info[0:2] == before_switch[0:2]
+    assert canvas.spatial_transform_info[2] > before_switch[2]
+    assert canvas.spatial_transform_info[3] == before_switch[3]
+
+    released = PinchHand("right", (160, 130), pinching=False)
+    coordinator.update(canvas, [moved_first, released])
+    assert canvas.is_moving
+    assert not canvas.is_transforming
+    assert canvas.undo()
+    assert canvas.spatial_transform_info == (1.0, 0.0, 0.0, 0.0)
+    assert canvas.spatial.transform_mode == "tilt_y"
+
+
+def test_releasing_second_hand_immediately_after_mode_switch_does_not_move_layer():
+    canvas = DrawingCanvas(240, 180)
+    contour = np.asarray([(60, 45), (180, 45), (180, 135), (60, 135)], dtype=np.float32)
+    canvas.spatial.add_plane(contour, (60, 120, 240))
+    canvas.spatial.set_transform_mode("spin")
+    coordinator = GrabCoordinator(transform_arm_frames=1)
+    first = PinchHand("left", (100, 90), pinching=True, started=True)
+    second = PinchHand("right", (180, 90), pinching=True, started=True)
+    coordinator.update(canvas, [first])
+    coordinator.update(canvas, [first, second])
+    moved_first = PinchHand("left", (80, 70), pinching=True)
+    turned = PinchHand("right", (140, 130), pinching=True)
+    coordinator.update(canvas, [moved_first, turned])
+    before_position = canvas.spatial.objects[0].position
+    before_rotation = canvas.spatial_transform_info
+
+    canvas.spatial.set_transform_mode("tilt_y")
+    released = PinchHand("right", (140, 130), pinching=False)
+    coordinator.update(canvas, [moved_first, released])
+
+    assert not canvas.is_transforming
+    assert canvas.spatial.objects[0].position == before_position
+    assert canvas.spatial_transform_info == before_rotation

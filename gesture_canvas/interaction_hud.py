@@ -6,6 +6,15 @@ import cv2
 import numpy as np
 
 
+TRANSFORM_MODE_LABELS = {
+    "auto": "AUTO",
+    "scale": "SCALE",
+    "tilt_x": "TILT X",
+    "tilt_y": "TILT Y",
+    "spin": "SPIN Z",
+}
+
+
 def draw_manipulation_hud(
     frame: np.ndarray,
     mode: str,
@@ -13,6 +22,7 @@ def draw_manipulation_hud(
     recovering_tracking: bool = False,
     content_top: int = 74,
     active_control: str | None = None,
+    requested_control: str = "auto",
 ) -> None:
     """Draw a compact gesture hint only while an object is being manipulated."""
 
@@ -23,20 +33,24 @@ def draw_manipulation_hud(
 
     if mode == "arm-transform":
         title = "TWO-HAND READY"
-        hint = "HOLD BOTH PINCHES STEADY - THEN MOVE TO ROTATE"
+        hint = (
+            "HOLD BOTH PINCHES STEADY - THEN MOVE TO ROTATE"
+            if requested_control == "auto"
+            else f"{TRANSFORM_MODE_LABELS[requested_control]} READY - HOLD BOTH PINCHES"
+        )
     elif mode == "transform":
         title = "TWO-HAND TRANSFORM"
-        control_labels = {
-            "scale": "SCALE",
-            "spin": "SPIN Z",
-            "tilt_x": "TILT X",
-            "tilt_y": "TILT Y",
-        }
-        if active_control in control_labels:
-            hint = (
-                f"{control_labels[active_control]} LOCKED   "
-                "RELEASE SECOND PINCH TO SWITCH"
-            )
+        if active_control in TRANSFORM_MODE_LABELS and active_control != "auto":
+            if requested_control == "auto":
+                hint = (
+                    f"{TRANSFORM_MODE_LABELS[active_control]} LOCKED   "
+                    "RELEASE SECOND PINCH TO SWITCH"
+                )
+            else:
+                hint = (
+                    f"{TRANSFORM_MODE_LABELS[active_control]} MANUAL   "
+                    "PRESS 0-4 TO SWITCH"
+                )
         else:
             hint = "MOVE ONE WAY: APART=SCALE  TURN=SPIN  PAIR=TILT"
     elif mode == "move-3d":
@@ -94,3 +108,33 @@ def draw_manipulation_hud(
             1,
             cv2.LINE_AA,
         )
+
+
+def draw_transform_mode_hud(frame: np.ndarray, control: str) -> None:
+    """Keep the selected spatial control visible between manipulation gestures."""
+
+    label = TRANSFORM_MODE_LABELS[control]
+    height, width = frame.shape[:2]
+    if height < 130 or width < 240:
+        return
+    shortcuts = "0 AUTO 1 SIZE 2 X 3 Y 4 Z" if width >= 560 else "[0-4]"
+    text = f"3D {label} | {shortcuts}"
+    font_scale = 0.38
+    text_width = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)[0][0]
+    cv2.rectangle(
+        frame,
+        (8, height - 64),
+        (min(width - 8, text_width + 24), height - 37),
+        (18, 22, 30),
+        -1,
+    )
+    cv2.putText(
+        frame,
+        text,
+        (15, height - 46),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        (80, 220, 255),
+        1,
+        cv2.LINE_AA,
+    )

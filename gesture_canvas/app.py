@@ -16,7 +16,7 @@ from .camera import DetectedHand, create_hand_tracker, detect_hands, open_camera
 from .calibration import CalibrationMeasurement, CalibrationSession
 from .calibration_overlay import draw_calibration_overlay
 from .canvas import DrawingCanvas
-from .controls import DEFAULT_BRUSH_SIZE, adjust_brush_size
+from .controls import DEFAULT_BRUSH_SIZE, adjust_brush_size, transform_mode_for_key
 from .gestures import (
     DrawGestureStabilizer,
     Gesture,
@@ -24,7 +24,11 @@ from .gestures import (
     PinchDetector,
 )
 from .help_overlay import draw_help_overlay
-from .interaction_hud import draw_manipulation_hud
+from .interaction_hud import (
+    TRANSFORM_MODE_LABELS,
+    draw_manipulation_hud,
+    draw_transform_mode_hud,
+)
 from .interaction import GrabCoordinator, PinchHand
 from .layer_panel import LayerPanel, LayerPanelTarget
 from .landmarks import palm_span, pinch_point, to_pixel
@@ -722,7 +726,14 @@ def main() -> None:
                         cv2.LINE_AA,
                     )
 
+            requested_control = canvas.spatial.transform_mode
             spatial_control = canvas.spatial_transform_control
+            if (
+                canvas.selected_is_spatial
+                and spatial_control is None
+                and requested_control != "auto"
+            ):
+                spatial_control = requested_control
             if canvas.selected_is_spatial:
                 draw_spatial_guides(
                     display,
@@ -748,6 +759,9 @@ def main() -> None:
                 grab_coordinator.recovering_tracking,
                 toolbar.height,
                 active_control=spatial_control,
+                requested_control=(
+                    requested_control if canvas.selected_is_spatial else "auto"
+                ),
             )
 
             hands_by_key = {hand.key: hand for hand in hands}
@@ -828,6 +842,7 @@ def main() -> None:
                     2,
                     cv2.LINE_AA,
                 )
+            draw_transform_mode_hud(display, requested_control)
             if calibration is not None:
                 draw_calibration_overlay(
                     display,
@@ -896,7 +911,12 @@ def main() -> None:
                 continue
             if key == 27:
                 break
-            if key == 19:  # Ctrl+S
+            requested_mode = transform_mode_for_key(key)
+            if requested_mode is not None:
+                canvas.spatial.set_transform_mode(requested_mode)
+                status = f"3D control: {TRANSFORM_MODE_LABELS[requested_mode]}"
+                status_until = time.monotonic() + 2
+            elif key == 19:  # Ctrl+S
                 grab_coordinator.reset(canvas)
                 selector.reset()
                 try:
