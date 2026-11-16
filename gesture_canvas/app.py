@@ -27,7 +27,6 @@ from .help_overlay import draw_help_overlay
 from .interaction_hud import (
     TRANSFORM_MODE_LABELS,
     draw_manipulation_hud,
-    draw_transform_mode_hud,
 )
 from .interaction import GrabCoordinator, PinchHand
 from .layer_panel import LayerPanel, LayerPanelTarget
@@ -44,6 +43,7 @@ from .settings import (
 )
 from .spatial_guides import draw_spatial_guides
 from .toolbar import DwellSelector, Toolbar, ToolButton
+from .transform_menu import MenuHand, TransformControlMenu
 
 
 COLORS = {
@@ -316,6 +316,7 @@ def main() -> None:
     canvas: DrawingCanvas | None = None
     toolbar: Toolbar | None = None
     layer_panel: LayerPanel | None = None
+    transform_menu: TransformControlMenu | None = None
     selector = DwellSelector(dwell_seconds=0.7)
     layer_selector = DwellSelector(dwell_seconds=0.65)
     active_tool = "blue"
@@ -390,6 +391,7 @@ def main() -> None:
                 )
                 toolbar = Toolbar(width)
                 layer_panel = LayerPanel(width, height, toolbar.height)
+                transform_menu = TransformControlMenu(width, height)
                 grab_coordinator.selection_radius = settings.selection_radius(width)
                 if pending_startup is not None:
                     try:
@@ -412,6 +414,7 @@ def main() -> None:
                     pending_startup = None
             assert toolbar is not None
             assert layer_panel is not None
+            assert transform_menu is not None
 
             interaction_time = time.monotonic()
             brightness = float(frame.mean())
@@ -543,6 +546,27 @@ def main() -> None:
                     )
                     status_until = interaction_time + 3
 
+            menu_mode = transform_menu.update(
+                [
+                    MenuHand(
+                        hand.key,
+                        hand.cursor,
+                        pointing=hand.gesture is Gesture.DRAW,
+                        pinching=hand.pinching,
+                        erasing=hand.gesture is Gesture.ERASE,
+                    )
+                    for hand in hands
+                ],
+                interaction_time,
+                enabled=not calibration_frame and not show_help,
+            )
+            if menu_mode is not None:
+                canvas.spatial.set_transform_mode(menu_mode)
+                status = f"3D control: {TRANSFORM_MODE_LABELS[menu_mode]}"
+                status_until = interaction_time + 2
+            if transform_menu.is_open:
+                show_layers = False
+
             pinch_hands = [
                 PinchHand(
                     key=hand.key,
@@ -554,7 +578,7 @@ def main() -> None:
                 for hand in hands
             ]
             was_moving = canvas.is_moving
-            if calibration_frame:
+            if calibration_frame or transform_menu.blocks_canvas:
                 grab_coordinator.reset(canvas)
                 manipulation_frame = False
             else:
@@ -577,7 +601,7 @@ def main() -> None:
             display_confidence = 0.0
             layer_panel_active = show_layers and not calibration_frame and not show_help
 
-            if calibration_frame:
+            if calibration_frame or transform_menu.blocks_canvas:
                 canvas.end_stroke()
                 selector.reset()
                 layer_selector.reset()
@@ -787,6 +811,8 @@ def main() -> None:
                     layer_hover_key,
                     layer_hover_progress,
                 )
+            if not calibration_frame and not show_help:
+                transform_menu.draw(display, canvas.spatial.transform_mode)
             for hand in hands:
                 is_drawing_hand = hand.key == drawing_hand_id
                 radius = 14 if hand.pinching else 9
@@ -842,7 +868,6 @@ def main() -> None:
                     2,
                     cv2.LINE_AA,
                 )
-            draw_transform_mode_hud(display, requested_control)
             if calibration is not None:
                 draw_calibration_overlay(
                     display,
@@ -909,11 +934,17 @@ def main() -> None:
                     apply_interaction_settings()
                     status_until = time.monotonic() + 3
                 continue
+            if key == 27 and transform_menu.is_open:
+                transform_menu.dismiss()
+                key = -1
             if key == 27:
                 break
+            if key in (19, 15, ord("h"), ord("p"), ord("P"), ord("k"), ord("K")):
+                transform_menu.dismiss()
             requested_mode = transform_mode_for_key(key)
             if requested_mode is not None:
                 canvas.spatial.set_transform_mode(requested_mode)
+                transform_menu.dismiss()
                 status = f"3D control: {TRANSFORM_MODE_LABELS[requested_mode]}"
                 status_until = time.monotonic() + 2
             elif key == 19:  # Ctrl+S

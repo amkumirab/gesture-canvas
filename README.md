@@ -28,6 +28,7 @@ The project works immediately with deterministic hand-geometry rules and process
 - Scale and rotate a grabbed drawing by pinching it with both hands
 - Intent-locked 3D transforms that isolate scale, spin, and tilt
 - Explicit scale and X/Y/Z rotation controls with number shortcuts and a persistent mode indicator
+- Point-and-hold 3D control menu with input pausing and a neutral-hand resume guard
 - Stable two-hand transform arming with multi-frame intent confirmation
 - Continuous rotation when hand labels briefly swap during tracking
 - Smoothly return to one-hand movement when either hand releases
@@ -107,6 +108,9 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Tilt | Move both pinches together, or move one hand closer than the other |
 | Switch transform control | Release only the second pinch, then pinch again |
 | Select 3D transform mode | `0` auto, `1` scale, `2` X tilt, `3` Y tilt, `4` Z spin |
+| Open 3D control menu | Point at `3D CONTROL` above the bottom status bar and hold for 0.7 seconds |
+| Choose a mode / close menu | Point and hold on a mode or `CLOSE`; `Esc` also closes the menu |
+| Resume after menu use | Lower the pointing finger and release any pinch on both visible hands |
 | Reset 3D rotation | `R` |
 | Create a 3D layer | Point inside a filled closed shape and press `E` |
 | Open layer panel | `P`, then point at a layer or action and hold |
@@ -128,7 +132,11 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 
 ## Explicit 3D transform controls
 
-Create a 3D layer with `E`, then select a control using the number keys. Hold two pinches steady to start manipulating the layer:
+Create a 3D layer with `E`, then select a control using the number keys or the `3D CONTROL` menu above the bottom status bar. To use the menu, raise your index finger, point at `3D CONTROL`, and hold for 0.7 seconds. Then point and hold on the desired mode. A progress line shows when the selection will activate, and the current mode is marked `SELECTED`.
+
+Drawing, erasing, and grabbing pause during menu use. After selecting a mode or closing the menu, lower the pointing finger and release any pinch on all visible hands to resume. A brief tracking loss does not count as a neutral hand. The menu remains open when the pointer leaves it; use `CLOSE`, the trigger button, or `Esc` to dismiss it. `Esc` closes an open menu before it can quit the application. Number keys `0` to `4` also work while the menu is open. Opening the control menu closes the layer panel to keep the options unobstructed.
+
+Hold two pinches steady to start manipulating the layer:
 
 | Key | Control | Movement |
 |---|---|---|
@@ -154,6 +162,7 @@ gesture_canvas/
   project_file.py versioned editable project save/load and validation
   recovery.py     background session autosave coordination
   layer_panel.py  pointing-based 3D layer management panel
+  transform_menu.py  dwell-operated 3D control selector and safe input resume
   recording.py    safe camera and clean-canvas MP4 recording
   canvas.py       drawing, compositing, undo/redo, export
   interaction.py  one- and two-hand manipulation coordination
@@ -172,7 +181,7 @@ pytest
 
 ## Current scope
 
-Version `0.8.0` adds explicit 3D scale and rotation controls. Use `0` for automatic detection, `1` for scale, `2` for X tilt, `3` for Y tilt, and `4` for Z spin. Controls can be changed during a two-hand grab without resetting the layer's orientation or size.
+Version `0.9.0` adds a gesture-operated 3D control menu. Point and hold on `3D CONTROL` to choose automatic detection, scale, X tilt, Y tilt, or Z spin. Canvas input pauses during menu use and resumes after a neutral hand gesture, preventing accidental drawing or grabs behind the menu. The existing number shortcuts remain available.
 
 MP4 recording remains available with `F9` or `V` to start and stop. Press `M` before recording to switch between the complete camera interface and a clean canvas-only video. The recording timer and active mode remain visible while capturing.
 

@@ -17,6 +17,7 @@ HELP_ITEMS = (
     ("Start / stop recording", "F9 or V"),
     ("Recording mode", "M: camera / clean canvas"),
     ("3D transform control", "0 auto, 1 scale, 2 X, 3 Y, 4 Z"),
+    ("3D control menu", "Point + hold on 3D CONTROL"),
     ("Create 3D layer", "Point inside a closed shape, then E"),
     ("Layer panel", "P, then point and hold"),
     ("Select tool", "Point at toolbar and hold"),
