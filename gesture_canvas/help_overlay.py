@@ -10,6 +10,7 @@ HELP_ITEMS = (
     ("Calibrate", "K"),
     ("Restore defaults", "D"),
     ("Draw", "Raise index finger"),
+    ("Pause / resume drawing", "B, then relax hands to resume"),
     ("Erase", "Raise index and middle fingers"),
     ("Save / open project", "Ctrl+S / Ctrl+O"),
     ("Session recovery", "Automatic every 8 seconds"),

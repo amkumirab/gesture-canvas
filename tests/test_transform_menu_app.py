@@ -39,6 +39,40 @@ def test_menu_blocks_paint_erase_and_grabs_until_a_neutral_hand(
         (2.3, (300, 200), Gesture.IDLE),
         (2.4, (300, 200), Gesture.DRAW),
     ]
+    canvas = run_scripted_app(monkeypatch, tmp_path, events, {3: menu_key})
+
+    assert canvas.spatial.transform_mode == expected_mode
+    assert canvas.draw_calls == 1
+    assert canvas.erase_calls == 0
+    assert canvas.grab_calls == 0
+
+
+def test_drawing_pause_allows_grabs_and_requires_fresh_pose_to_resume(monkeypatch, tmp_path):
+    events = [
+        (0.0, (100, 120), Gesture.DRAW),
+        (0.1, (120, 120), Gesture.DRAW),
+        (0.2, (150, 120), Gesture.DRAW),
+        (0.3, (100, 120), Gesture.ERASE),
+        (0.4, (200, 200), Gesture.PINCH),
+        (0.5, (210, 200), Gesture.PINCH),
+        (0.8, (300, 120), Gesture.DRAW),
+        (0.9, (300, 120), None),
+        (1.0, (300, 120), Gesture.DRAW),
+        (1.1, (300, 120), Gesture.ERASE),
+        (1.2, (300, 120), Gesture.IDLE),
+        (1.3, (300, 120), Gesture.DRAW),
+    ]
+    canvas = run_scripted_app(monkeypatch, tmp_path, events, {1: ord("b"), 6: ord("B")})
+
+    assert canvas.draw_calls == 3
+    assert canvas.erase_calls == 0
+    assert canvas.spatial.objects[0].position[:2] == (240, 250)
+    assert canvas.mask[120, 110] > 0
+    assert canvas.mask[120, 200] == 0
+    assert canvas.mask[120, 300] > 0
+
+
+def run_scripted_app(monkeypatch, tmp_path, events, keys):
     state = {"index": -1}
     canvases = []
 
@@ -88,7 +122,7 @@ def test_menu_blocks_paint_erase_and_grabs_until_a_neutral_hand(
     ])
     monkeypatch.setattr(app, "open_camera", lambda _index: camera)
     monkeypatch.setattr(app, "create_hand_tracker", lambda: SimpleNamespace(close=lambda: None))
-    monkeypatch.setattr(app, "detect_hands", lambda *_args: [hand])
+    monkeypatch.setattr(app, "detect_hands", lambda *_args: [hand] if current()[2] is not None else [])
     monkeypatch.setattr(app, "DrawingCanvas", ObservedCanvas)
     monkeypatch.setattr(app, "GestureRecognizer", lambda *_args: SimpleNamespace(
         recognize=lambda _points: (current()[2], 1.0),
@@ -98,6 +132,7 @@ def test_menu_blocks_paint_erase_and_grabs_until_a_neutral_hand(
     ))
     monkeypatch.setattr(app, "DrawGestureStabilizer", lambda: SimpleNamespace(
         update=lambda gesture, _now: gesture,
+        hold_during_missing=lambda _now: False,
     ))
     smoother = lambda **_kwargs: SimpleNamespace(update=lambda value: value, reset=lambda: None)
     monkeypatch.setattr(app, "AdaptiveSmoother", smoother)
@@ -110,15 +145,11 @@ def test_menu_blocks_paint_erase_and_grabs_until_a_neutral_hand(
     def next_key(_delay):
         if state["index"] == len(events) - 1:
             return ord("q")
-        return menu_key if state["index"] == 3 else -1
+        return keys.get(state["index"], -1)
 
     monkeypatch.setattr(app.cv2, "waitKeyEx", next_key)
 
     app.main()
 
-    canvas = canvases[0]
-    assert canvas.spatial.transform_mode == expected_mode
-    assert canvas.draw_calls == 1
-    assert canvas.erase_calls == 0
-    assert canvas.grab_calls == 0
     assert camera.released
+    return canvases[0]

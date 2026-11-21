@@ -99,6 +99,7 @@ On the first launch, the application downloads MediaPipe's official Hand Landmar
 | Open editable project | `Ctrl+O` |
 | Start without restoring the previous session | Launch with `--no-restore` |
 | Draw | Raise only the index finger |
+| Pause or resume drawing and erasing | Press `B`. After resuming, briefly relax your hands before drawing again. Pinch grabs still work while drawing is paused. |
 | Auto-fill | Complete and close a shape, then lift or bend the drawing finger |
 | Temporary eraser | Raise index and middle fingers |
 | Toolbar selection | Point with your index finger and hold over a button for 0.7 seconds |

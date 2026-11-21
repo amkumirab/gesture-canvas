@@ -350,6 +350,8 @@ def main() -> None:
     )
     status_until = time.monotonic() + 5
     draw_blocked_until = 0.0
+    drawing_paused = False
+    waiting_for_drawing_pose_reset = False
     previous_time = time.monotonic()
     fps = 0.0
     failed_camera_reads = 0
@@ -546,6 +548,12 @@ def main() -> None:
                     )
                     status_until = interaction_time + 3
 
+            if waiting_for_drawing_pose_reset and hands and all(
+                not hand.pinching and hand.gesture in (Gesture.IDLE, Gesture.OPEN_PALM)
+                for hand in hands
+            ):
+                waiting_for_drawing_pose_reset = False
+
             menu_mode = transform_menu.update(
                 [
                     MenuHand(
@@ -670,6 +678,10 @@ def main() -> None:
                                 activated, canvas, args.output, active_tool
                             )
                             status_until = interaction_time + 2
+                    elif drawing_paused or waiting_for_drawing_pose_reset:
+                        selector.reset()
+                        layer_selector.reset()
+                        canvas.end_stroke()
                     else:
                         selector.reset()
                         layer_selector.reset()
@@ -842,8 +854,13 @@ def main() -> None:
             elapsed = max(now - previous_time, 1e-6)
             fps = 0.9 * fps + 0.1 * (1.0 / elapsed)
             previous_time = now
+            gesture_label = f"{display_gesture.value}  {display_confidence:.0%}"
+            if drawing_paused:
+                gesture_label = "DRAWING PAUSED [B]"
+            elif waiting_for_drawing_pose_reset:
+                gesture_label = "RELAX HANDS TO DRAW"
             label = (
-                f"{display_gesture.value}  {display_confidence:.0%}   "
+                f"{gesture_label}   "
                 f"brush {brush_size}px   3D {canvas.spatial_object_count}   "
                 f"hands {len(hands)}   FPS {fps:.0f}"
             )
@@ -1002,6 +1019,10 @@ def main() -> None:
             elif key == ord("y"):
                 canvas.redo()
                 grab_coordinator.reset()
+            elif key in (ord("b"), ord("B")):
+                drawing_paused = not drawing_paused
+                waiting_for_drawing_pose_reset = not drawing_paused
+                canvas.end_stroke()
             elif key == ord("["):
                 brush_size = adjust_brush_size(brush_size, -1)
                 status = f"Brush size: {brush_size}px"
